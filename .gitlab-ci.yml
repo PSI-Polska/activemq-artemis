@@ -13,4 +13,4 @@ build:
   stage: build
   image: maven:3.6.0-jdk-11
   script:
-    - mvn $MAVEN_CLI_OPTS -Dorg.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory.DISABLED=AnythingNotNull -Pfast-tests -Pextra-tests -B install -q -pl '!artemis-web'
+    - mvn $MAVEN_CLI_OPTS -Dorg.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory.DISABLED=AnythingNotNull install -q -pl '!artemis-web'
