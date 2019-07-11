@@ -28,6 +28,7 @@ import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriBuilder;
 import javax.ws.rs.core.UriInfo;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -125,34 +126,8 @@ public class PushSubscriptionsResource {
    public Response create(@Context UriInfo uriInfo, PushTopicRegistration registration) {
       ActiveMQRestLogger.LOGGER.debug("Handling POST request for \"" + uriInfo.getPath() + "\"");
 
-      //System.out.println("PushRegistration: " + registration);
-      // todo put some logic here to check for duplicates
-      String genId = sessionCounter.getAndIncrement() + "-topic-" + destination + "-" + startup;
-      if (registration.getDestination() == null) {
-         registration.setDestination(genId);
-      }
-      registration.setId(genId);
-      registration.setTopic(destination);
-      ClientSession createSession = createSubscription(genId, registration.isDurable());
-      try {
-         PushSubscription consumer = new PushSubscription(sessionFactory, genId, genId, registration, pushStore, jmsOptions);
-         try {
-            consumer.start();
-            if (registration.isDurable() && pushStore != null) {
-               pushStore.add(registration);
-            }
-         } catch (Exception e) {
-            consumer.stop();
-            throw new WebApplicationException(e, Response.serverError().entity("Failed to start consumer.").type("text/plain").build());
-         }
-
-         consumers.put(genId, consumer);
-         UriBuilder location = uriInfo.getAbsolutePathBuilder();
-         location.path(genId);
-         return Response.created(location.build()).build();
-      } finally {
-         closeSession(createSession);
-      }
+      Optional<PushSubscription> existing = findBySubscriptionId( registration.getDestination() );
+      return existing.map( subscription -> restartSubscription( uriInfo, subscription ) ).orElseGet( () -> createNewSubscription( uriInfo, registration ) );
    }
 
    @GET
@@ -199,6 +174,67 @@ public class PushSubscriptionsResource {
 
    public void setDestination(String destination) {
       this.destination = destination;
+   }
+
+   private Response createNewSubscription(UriInfo uriInfo, PushTopicRegistration registration) {
+      String genId = sessionCounter.getAndIncrement() + "-topic-" + destination + "-" + startup;
+      if (registration.getDestination() == null) {
+         registration.setDestination(genId);
+      }
+      registration.setId(genId);
+      registration.setTopic(destination);
+      registration.setDisableOnFailure( true );
+
+      ClientSession createSession = createSubscription(registration.getDestination(), registration.isDurable());
+      try {
+         PushSubscription consumer = new PushSubscription(sessionFactory, registration.getDestination(), genId, registration, pushStore, jmsOptions);
+         try {
+            consumer.start();
+            if (registration.isDurable() && pushStore != null) {
+               pushStore.add(registration);
+            }
+         } catch (Exception e) {
+            consumer.stop();
+            throw new WebApplicationException(e, Response.serverError().entity("Failed to start consumer.").type("text/plain").build());
+         }
+
+         consumers.put(genId, consumer);
+         UriBuilder location = uriInfo.getAbsolutePathBuilder();
+         location.path(genId);
+         return Response.created(location.build()).build();
+      } finally {
+         closeSession(createSession);
+      }
+   }
+
+   private Response restartSubscription(UriInfo uriInfo, PushSubscription subscription) {
+      subscription.getRegistration().setEnabled( true );
+
+      try {
+         subscription.start();
+         if (subscription.getRegistration().isDurable()) {
+            pushStore.update(subscription.getRegistration());
+         }
+      } catch (Exception e) {
+         subscription.stop();
+         throw new WebApplicationException(e, Response.serverError().entity("Failed to start consumer.").type("text/plain").build());
+      }
+
+      UriBuilder location = uriInfo.getAbsolutePathBuilder();
+      location.path(subscription.getRegistration().getId());
+      return Response.created(location.build()).build();
+   }
+
+   private Optional<PushSubscription> findBySubscriptionId( String subscriptionId) {
+
+      if (subscriptionId == null) {
+         return Optional.empty();
+      }
+
+      return consumers.values()
+          .stream()
+          .filter( consumer -> subscriptionId.equals( consumer.getDestination()) )
+          .findAny();
    }
 
    private void deleteSubscriberQueue(PushConsumer consumer) {
