@@ -39,8 +39,6 @@ public class PushSubscription extends PushConsumer {
    @Override
    public void disableFromFailure() {
       super.disableFromFailure();
-      if (registration.isDurable())
-         deleteSubscriberQueue();
    }
 
    protected void deleteSubscriberQueue() {

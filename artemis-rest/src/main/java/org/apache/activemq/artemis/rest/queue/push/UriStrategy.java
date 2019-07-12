@@ -117,7 +117,9 @@ public class UriStrategy implements PushStrategy {
    public boolean push(ClientMessage message) {
       ActiveMQRestLogger.LOGGER.debug("Pushing " + message);
       String uri = createUri(message);
+      message.getBodyBuffer().markReaderIndex();
       for (int i = 0; i < registration.getMaxRetries(); i++) {
+         message.getBodyBuffer().resetReaderIndex();
          long wait = registration.getRetryWaitMillis();
          System.out.println("Creating request from " + uri);
          ClientRequest request = executor.createRequest(uri);
