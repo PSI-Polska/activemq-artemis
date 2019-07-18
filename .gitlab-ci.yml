@@ -13,4 +13,4 @@ build:
   stage: build
   image: maven:3.6.0-jdk-8
   script:
-    - mvn $MAVEN_CLI_OPTS -Dorg.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory.DISABLED=AnythingNotNull clean install -pl 
+    - mvn $MAVEN_CLI_OPTS -Dorg.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory.DISABLED=AnythingNotNull clean install 
