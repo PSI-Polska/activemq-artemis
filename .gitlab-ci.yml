@@ -2,7 +2,7 @@ stages:
   - build
 
 variables:
-  MAVEN_CLI_OPTS: "--batch-mode -s $M2_SETTINGS"
+  MAVEN_CLI_OPTS: "--batch-mode"
   MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
 
 cache:
@@ -13,4 +13,4 @@ build:
   stage: build
   image: maven:3.6.0-jdk-8
   script:
-    - mvn $MAVEN_CLI_OPTS -Dorg.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory.DISABLED=AnythingNotNull clean install 
+    - mvn $MAVEN_CLI_OPTS -s $M2_SETTINGS -Dorg.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory.DISABLED=AnythingNotNull clean install 
