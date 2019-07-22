@@ -1,5 +1,6 @@
 stages:
   - build
+  - deploy
 
 variables:
   MAVEN_CLI_OPTS: "--batch-mode"
@@ -14,3 +15,9 @@ build:
   image: maven:3.6.0-jdk-8
   script:
     - mvn $MAVEN_CLI_OPTS -s $M2_SETTINGS -Dorg.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory.DISABLED=AnythingNotNull clean install 
+
+deploy:
+  stage: deploy
+  image: maven:3.6.0-jdk-8
+  script:
+    - mvn $MAVEN_CLI_OPTS -s $M2_SETTINGS -Dorg.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory.DISABLED=AnythingNotNull deploy 
