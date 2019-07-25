@@ -18,12 +18,15 @@ package org.apache.activemq.artemis.rest.topic;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.jms.client.ConnectionFactoryOptions;
+import org.apache.activemq.artemis.rest.ActiveMQRestLogger;
 import org.apache.activemq.artemis.rest.queue.DestinationServiceManager;
+import org.apache.activemq.artemis.rest.queue.push.xml.PushRegistration;
 
 public class TopicServiceManager extends DestinationServiceManager {
 
@@ -73,10 +76,17 @@ public class TopicServiceManager extends DestinationServiceManager {
          destination = new TopicDestinationsResource(this);
       }
 
+      List<String> registeredTopics = pushStore.getRegistrations().stream().filter( PushRegistration::isEnabled )
+          .map( aPushRegistration ->  (PushTopicRegistration)aPushRegistration )
+          .map( PushTopicRegistration::getTopic ).collect( Collectors.toList() );
+
+      registeredTopics.forEach( top -> this.restartDestinationResource( () -> destination.findTopic( top ) ) );
+
       for (TopicDeployment topic : topics) {
          deploy(topic);
       }
    }
+
 
    public void deploy(TopicDeployment topicDeployment) throws Exception {
       if (!started) {

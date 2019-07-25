@@ -20,15 +20,18 @@ import java.util.List;
 
 import org.apache.activemq.artemis.rest.queue.push.xml.PushRegistration;
 
-public interface PushStore {
+public interface PushStore
+{
 
-   void add(PushRegistration reg) throws Exception;
+   void add( PushRegistration reg ) throws Exception;
 
-   void remove(PushRegistration reg) throws Exception;
+   void remove( PushRegistration reg ) throws Exception;
 
-   List<PushRegistration> getByDestination(String destination);
+   List< PushRegistration > getByDestination( String destination );
 
-   void update(PushRegistration reg) throws Exception;
+   void update( PushRegistration reg ) throws Exception;
 
    void removeAll() throws Exception;
+
+   List< PushRegistration > getRegistrations();
 }

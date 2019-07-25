@@ -18,6 +18,7 @@ package org.apache.activemq.artemis.rest.queue;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
@@ -25,6 +26,8 @@ import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.jms.client.ConnectionFactoryOptions;
 import org.apache.activemq.artemis.rest.queue.push.FilePushStore;
 import org.apache.activemq.artemis.rest.queue.push.PushStore;
+import org.apache.activemq.artemis.rest.queue.push.xml.PushRegistration;
+import org.apache.activemq.artemis.rest.topic.PushTopicRegistration;
 
 public class QueueServiceManager extends DestinationServiceManager {
 
@@ -71,6 +74,11 @@ public class QueueServiceManager extends DestinationServiceManager {
       if (pushStoreFile != null && pushStore == null) {
          pushStore = new FilePushStore(pushStoreFile);
       }
+
+      List<String> registeredQueues = pushStore.getRegistrations().stream().filter( PushRegistration::isEnabled )
+          .map( PushRegistration::getDestination ).collect( Collectors.toList() );
+
+      registeredQueues.forEach( name -> this.restartDestinationResource( () -> destination.findQueue( name ) ) );
 
       for (QueueDeployment queueDeployment : queues) {
          deploy(queueDeployment);

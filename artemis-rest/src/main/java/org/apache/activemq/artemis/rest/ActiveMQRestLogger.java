@@ -91,4 +91,8 @@ public interface ActiveMQRestLogger extends BasicLogger {
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 184003, value = "Error deleting Subscriber queue", format = Message.Format.MESSAGE_FORMAT)
    void errorDeletingSubscriberQueue(@Cause ActiveMQException e);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 184004, value = "Error restarting resource.", format = Message.Format.MESSAGE_FORMAT)
+   void errorRestartingResource(@Cause Exception e);
 }

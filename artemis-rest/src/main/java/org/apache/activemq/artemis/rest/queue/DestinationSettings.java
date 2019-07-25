@@ -51,6 +51,6 @@ public class DestinationSettings {
    static {
       defaultSettings = new DestinationSettings();
       defaultSettings.setDuplicatesAllowed(true);
-      defaultSettings.setDurableSend(false);
+      defaultSettings.setDurableSend(true);
    }
 }

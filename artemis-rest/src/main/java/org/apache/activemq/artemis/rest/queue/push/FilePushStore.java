@@ -56,6 +56,7 @@ public class FilePushStore implements PushStore {
       }
    }
 
+   @Override
    public synchronized List<PushRegistration> getRegistrations() {
       List<PushRegistration> list = new ArrayList<>(map.values());
       return list;
