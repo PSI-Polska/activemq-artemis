@@ -22,9 +22,12 @@ import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.remoting.impl.invm.InVMConnectorFactory;
 import org.apache.activemq.artemis.jms.client.ConnectionFactoryOptions;
+import org.apache.activemq.artemis.rest.ActiveMQRestLogger;
 import org.apache.activemq.artemis.rest.util.LinkStrategy;
 import org.apache.activemq.artemis.rest.util.TimeoutTask;
 import org.apache.activemq.artemis.spi.core.naming.BindingRegistry;
+
+import java.util.concurrent.Callable;
 
 public abstract class DestinationServiceManager {
 
@@ -139,6 +142,18 @@ public abstract class DestinationServiceManager {
 
    public void setPushStoreFile(String pushStoreFile) {
       this.pushStoreFile = pushStoreFile;
+   }
+
+   protected void restartDestinationResource( Callable action) {
+      try
+      {
+         action.call();
+      }
+      catch( Exception aE )
+      {
+         ActiveMQRestLogger.LOGGER.errorRestartingResource( aE);
+         throw new RuntimeException( aE );
+      }
    }
 
    protected void initDefaults() {
