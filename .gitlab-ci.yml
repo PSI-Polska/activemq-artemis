@@ -1,3 +1,5 @@
+image: maven:3.6.0-jdk-8
+
 stages:
   - build
   - deploy
@@ -12,12 +14,12 @@ cache:
 
 build:
   stage: build
-  image: maven:3.6.0-jdk-8
   script:
     - mvn $MAVEN_CLI_OPTS -s $M2_SETTINGS -Dorg.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory.DISABLED=AnythingNotNull clean install
 
 deploy:
   stage: deploy
-  image: maven:3.6.0-jdk-8
+  only:
+    - 2.9.0-PSI
   script:
     - mvn $MAVEN_CLI_OPTS -s $M2_SETTINGS -Dorg.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory.DISABLED=AnythingNotNull deploy 
