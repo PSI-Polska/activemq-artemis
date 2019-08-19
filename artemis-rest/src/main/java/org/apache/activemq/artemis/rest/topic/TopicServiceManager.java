@@ -16,17 +16,17 @@
  */
 package org.apache.activemq.artemis.rest.topic;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.stream.Collectors;
-
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.jms.client.ConnectionFactoryOptions;
 import org.apache.activemq.artemis.rest.ActiveMQRestLogger;
 import org.apache.activemq.artemis.rest.queue.DestinationServiceManager;
 import org.apache.activemq.artemis.rest.queue.push.xml.PushRegistration;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class TopicServiceManager extends DestinationServiceManager {
 
@@ -34,8 +34,9 @@ public class TopicServiceManager extends DestinationServiceManager {
    protected List<TopicDeployment> topics = new ArrayList<>();
    protected TopicDestinationsResource destination;
 
-   public TopicServiceManager(ConnectionFactoryOptions jmsOptions) {
-      super(jmsOptions);
+   public TopicServiceManager(ConnectionFactoryOptions jmsOptions)
+   {
+      super(jmsOptions, "topic_storage");
    }
 
    public TopicPushStore getPushStore() {
@@ -68,6 +69,9 @@ public class TopicServiceManager extends DestinationServiceManager {
 
       started = true;
 
+      if (pushStoreQueuePrefix != null && pushStore == null){
+          pushStore = new DestinationTopicPushStore(sessionFactory,unmarshaler, getPrivateQueueName(), getGlobalQueueName());
+      }
       if (pushStoreFile != null && pushStore == null) {
          pushStore = new FileTopicPushStore(pushStoreFile);
       }
@@ -76,8 +80,7 @@ public class TopicServiceManager extends DestinationServiceManager {
          destination = new TopicDestinationsResource(this);
       }
 
-      List<String> registeredTopics = pushStore.getRegistrations().stream().filter( PushRegistration::isEnabled )
-          .map( aPushRegistration ->  (PushTopicRegistration)aPushRegistration )
+      List<String> registeredTopics = pushStore.getTopicRegistrations().stream().filter( PushRegistration::isEnabled )
           .map( PushTopicRegistration::getTopic ).collect( Collectors.toList() );
 
       registeredTopics.forEach( top -> this.restartDestinationResource( () -> destination.findTopic( top ) ) );
@@ -85,6 +88,19 @@ public class TopicServiceManager extends DestinationServiceManager {
       for (TopicDeployment topic : topics) {
          deploy(topic);
       }
+
+      startGlobalQueueHandler( content -> {
+         try
+         {
+            destination.createInternal( content.getDestination() );
+         }
+         catch( Exception aE )
+         {
+         }
+         ActiveMQRestLogger.LOGGER.info("Recreating push subscription for :"+content.getDestination());
+         TopicResource res = restartDestinationResource( () ->  destination.findTopic( content.getDestination() ));
+         res.getPushSubscriptions().performCreationOrRestartSubscription( (PushTopicRegistration)content );
+      } );
    }
 
 

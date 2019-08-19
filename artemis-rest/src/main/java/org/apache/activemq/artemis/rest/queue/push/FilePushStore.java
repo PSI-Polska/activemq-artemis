@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 import org.apache.activemq.artemis.rest.ActiveMQRestLogger;
 import org.apache.activemq.artemis.rest.queue.push.xml.PushRegistration;
@@ -55,6 +56,7 @@ public class FilePushStore implements PushStore {
          }
       }
    }
+
 
    @Override
    public synchronized List<PushRegistration> getRegistrations() {
@@ -112,5 +114,10 @@ public class FilePushStore implements PushStore {
       for (PushRegistration reg : copy)
          remove(reg);
       this.dir.delete();
+   }
+
+   @Override
+   public long count() {
+      return new Integer(map.values().size()).longValue();
    }
 }

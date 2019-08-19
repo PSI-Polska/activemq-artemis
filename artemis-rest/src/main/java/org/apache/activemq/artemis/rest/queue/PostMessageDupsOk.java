@@ -67,7 +67,7 @@ public class PostMessageDupsOk extends PostMessage {
                           @QueryParam("priority") Integer priority,
                           @Context UriInfo uriInfo,
                           byte[] body) {
-      ActiveMQRestLogger.LOGGER.debug("Handling POST request for \"" + uriInfo.getRequestUri() + "\"");
+      ActiveMQRestLogger.LOGGER.info("Handling POST request for \"" + uriInfo.getRequestUri() + "\"");
 
       try {
          boolean isDurable = defaultDurable;

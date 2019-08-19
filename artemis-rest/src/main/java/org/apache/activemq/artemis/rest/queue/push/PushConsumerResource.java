@@ -79,26 +79,31 @@ public class PushConsumerResource {
    public Response create(@Context UriInfo uriInfo, PushRegistration registration) {
       ActiveMQRestLogger.LOGGER.debug("Handling POST request for \"" + uriInfo.getPath() + "\"");
 
-      // todo put some logic here to check for duplicates
-      String genId = sessionCounter.getAndIncrement() + "-" + startup;
-      registration.setId(genId);
-      registration.setDestination(destination);
-      PushConsumer consumer = new PushConsumer(sessionFactory, destination, genId, registration, pushStore, jmsOptions);
-      try {
-         consumer.start();
-         if (registration.isDurable() && pushStore != null) {
-            pushStore.add(registration);
-         }
-      } catch (Exception e) {
-         consumer.stop();
-         throw new WebApplicationException(e, Response.serverError().entity("Failed to start consumer.").type("text/plain").build());
-      }
-
-      consumers.put(genId, consumer);
+      String generatedId = performCreation(registration);
+      
       UriBuilder location = uriInfo.getAbsolutePathBuilder();
-      location.path(genId);
+      location.path(generatedId);
       return Response.created(location.build()).build();
    }
+
+    public String performCreation(PushRegistration registration) throws WebApplicationException
+    {
+        // todo put some logic here to check for duplicates
+        String genId = sessionCounter.getAndIncrement() + "-" + startup;
+        registration.setId(genId);
+        registration.setDestination(destination);
+        PushConsumer consumer = new PushConsumer(sessionFactory, destination, genId, registration, pushStore, jmsOptions);
+        try {
+            consumer.start();
+            if (registration.isDurable() && pushStore != null) {
+                pushStore.add(registration);
+            }
+        } catch (Exception e) {
+            consumer.stop();
+            throw new WebApplicationException(e, Response.serverError().entity("Failed to start consumer.").type("text/plain").build());
+        } consumers.put(genId, consumer);
+        return genId;
+    }
 
    @GET
    @Path("{consumer-id}")

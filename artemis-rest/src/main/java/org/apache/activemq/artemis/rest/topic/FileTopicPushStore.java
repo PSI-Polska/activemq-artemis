@@ -29,6 +29,21 @@ class FileTopicPushStore extends FilePushStore implements TopicPushStore {
    }
 
    @Override
+   public synchronized List<PushRegistration> getRegistrations() {
+      throw new UnsupportedOperationException("Not applicable at topic level");
+   }
+
+   @Override
+   public List<PushTopicRegistration> getTopicRegistrations() {
+      List<PushTopicRegistration> list = new ArrayList<>();
+      for (PushRegistration reg : map.values()) {
+         PushTopicRegistration topicReg = (PushTopicRegistration) reg;
+         list.add(topicReg);
+      }
+      return list;
+   }
+
+   @Override
    public synchronized List<PushTopicRegistration> getByTopic(String topic) {
       List<PushTopicRegistration> list = new ArrayList<>();
       for (PushRegistration reg : map.values()) {

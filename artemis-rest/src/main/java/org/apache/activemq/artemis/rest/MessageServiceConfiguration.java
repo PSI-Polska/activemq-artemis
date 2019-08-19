@@ -30,6 +30,7 @@ public class MessageServiceConfiguration {
    private int consumerWindowSize = -1;
    private boolean defaultDurableSend = false;
    private boolean dupsOk = true;
+   private String pushStoreQueuePrefix = null;
    private String topicPushStoreDirectory = "topic-push-store";
    private String queuePushStoreDirectory = "queue-push-store";
    @Deprecated
@@ -75,6 +76,11 @@ public class MessageServiceConfiguration {
 
    public void setDupsOk(boolean dupsOk) {
       this.dupsOk = dupsOk;
+   }
+
+
+   public void setPushStoreQueuePrefix(String pushStoreQueuePrefix){
+      this.pushStoreQueuePrefix = pushStoreQueuePrefix;
    }
 
    @XmlElement(name = "topic-push-store-dir")
