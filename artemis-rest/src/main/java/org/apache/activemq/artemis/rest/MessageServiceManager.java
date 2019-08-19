@@ -16,19 +16,11 @@
  */
 package org.apache.activemq.artemis.rest;
 
-import javax.xml.bind.JAXBContext;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.io.StringReader;
-import java.net.URL;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.jms.client.ConnectionFactoryOptions;
+import org.apache.activemq.artemis.rest.push.balancer.PushBalancer;
 import org.apache.activemq.artemis.rest.queue.DestinationSettings;
 import org.apache.activemq.artemis.rest.queue.QueueServiceManager;
 import org.apache.activemq.artemis.rest.topic.TopicServiceManager;
@@ -39,12 +31,27 @@ import org.apache.activemq.artemis.rest.util.TimeoutTask;
 import org.apache.activemq.artemis.spi.core.naming.BindingRegistry;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.artemis.utils.XMLUtil;
+import org.apache.commons.lang3.StringUtils;
+
+import javax.xml.bind.JAXBContext;
+import java.io.File;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.io.StringReader;
+import java.net.URL;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class MessageServiceManager {
 
    private ExecutorService threadPool;
    private QueueServiceManager queueManager;
    private TopicServiceManager topicManager;
+   private PushBalancer pushBalancer;
    private TimeoutTask timeoutTask;
    private int timeoutTaskInterval = 1;
    protected MessageServiceConfiguration configuration = new MessageServiceConfiguration();
@@ -54,9 +61,11 @@ public class MessageServiceManager {
 
    private ClientSessionFactory consumerSessionFactory;
 
-   public MessageServiceManager(ConnectionFactoryOptions jmsOptions) {
+   public MessageServiceManager(ConnectionFactoryOptions jmsOptions)
+   {
       queueManager = new QueueServiceManager(jmsOptions);
       topicManager = new TopicServiceManager(jmsOptions);
+      pushBalancer = new PushBalancer();
    }
 
    public BindingRegistry getRegistry() {
@@ -140,7 +149,7 @@ public class MessageServiceManager {
       defaultSettings.setDuplicatesAllowed(configuration.isDupsOk());
       defaultSettings.setDurableSend(configuration.isDefaultDurableSend());
 
-      ServerLocator consumerLocator = ActiveMQClient.createServerLocator(configuration.getUrl());
+      ServerLocator consumerLocator = ActiveMQClient.createServerLocator(getUrl());
 
       if (configuration.getConsumerWindowSize() != -1) {
          consumerLocator.setConsumerWindowSize(configuration.getConsumerWindowSize());
@@ -151,7 +160,7 @@ public class MessageServiceManager {
       consumerSessionFactory = consumerLocator.createSessionFactory();
       ActiveMQRestLogger.LOGGER.debug("Created ClientSessionFactory: " + consumerSessionFactory);
 
-      ServerLocator defaultLocator = ActiveMQClient.createServerLocator(configuration.getUrl());
+      ServerLocator defaultLocator = ActiveMQClient.createServerLocator(getUrl());
 
       ClientSessionFactory sessionFactory = defaultLocator.createSessionFactory();
 
@@ -162,12 +171,15 @@ public class MessageServiceManager {
          linkStrategy = new CustomHeaderLinkStrategy();
       }
 
+      String nodeIdentifier = getNodeIdentifier();
+
       queueManager.setServerLocator(defaultLocator);
       queueManager.setSessionFactory(sessionFactory);
       queueManager.setTimeoutTask(timeoutTask);
       queueManager.setConsumerServerLocator(consumerLocator);
       queueManager.setConsumerSessionFactory(consumerSessionFactory);
       queueManager.setDefaultSettings(defaultSettings);
+      queueManager.setPushStoreQueue(nodeIdentifier);
       queueManager.setPushStoreFile(configuration.getQueuePushStoreDirectory());
       queueManager.setProducerPoolSize(configuration.getProducerSessionPoolSize());
       queueManager.setProducerTimeToLive(configuration.getProducerTimeToLive());
@@ -180,14 +192,32 @@ public class MessageServiceManager {
       topicManager.setConsumerServerLocator(consumerLocator);
       topicManager.setConsumerSessionFactory(consumerSessionFactory);
       topicManager.setDefaultSettings(defaultSettings);
+      topicManager.setPushStoreQueue(nodeIdentifier);
       topicManager.setPushStoreFile(configuration.getTopicPushStoreDirectory());
       topicManager.setProducerPoolSize(configuration.getProducerSessionPoolSize());
       queueManager.setProducerTimeToLive(configuration.getProducerTimeToLive());
       topicManager.setLinkStrategy(linkStrategy);
       topicManager.setRegistry(registry);
 
+      pushBalancer.setSessionFactory(sessionFactory);
+      pushBalancer.setInstanceId(nodeIdentifier);
+      pushBalancer.setQueueServiceManager(queueManager);
+      pushBalancer.setTopicServiceManager(topicManager);
+
       queueManager.start();
       topicManager.start();
+      pushBalancer.start();
+   }
+
+   private String getNodeIdentifier(){
+      String hostname = System.getenv("CLUSTER_HOST");
+      if(hostname != null){
+         return hostname.toLowerCase();
+      }else{
+         Path currentRelativePath = Paths.get( "");
+         String path = currentRelativePath.toAbsolutePath().toString();
+         return path.replaceAll( File.pathSeparator, "_" );
+      }
    }
 
    private boolean isOutsideOfClassloader(URL url) {
@@ -195,6 +225,9 @@ public class MessageServiceManager {
    }
 
    public void stop() {
+      if (pushBalancer != null)
+         pushBalancer.stop();
+      pushBalancer = null;
       if (queueManager != null)
          queueManager.stop();
       queueManager = null;
@@ -208,5 +241,13 @@ public class MessageServiceManager {
       } catch (InterruptedException e) {
       }
       this.consumerSessionFactory.close();
+   }
+
+   private String getUrl() {
+      String envUrl = System.getenv("ARTEMIS_REST_CONNECTION_URL");
+      if( StringUtils.isNotBlank( envUrl ) ) {
+         return envUrl;
+      }
+      return configuration.getUrl();
    }
 }

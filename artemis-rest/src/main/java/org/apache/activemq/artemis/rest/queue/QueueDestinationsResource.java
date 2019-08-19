@@ -16,19 +16,6 @@
  */
 package org.apache.activemq.artemis.rest.queue;
 
-import javax.ws.rs.Consumes;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.WebApplicationException;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.UriInfo;
-import java.net.URI;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
@@ -41,6 +28,19 @@ import org.apache.activemq.artemis.rest.queue.push.PushConsumerResource;
 import org.apache.activemq.artemis.rest.queue.push.xml.PushRegistration;
 import org.apache.activemq.artemis.rest.util.Constants;
 import org.w3c.dom.Document;
+
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.WebApplicationException;
+import javax.ws.rs.core.Context;
+import javax.ws.rs.core.Response;
+import javax.ws.rs.core.UriInfo;
+import java.net.URI;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Path(Constants.PATH_FOR_QUEUES)
 public class QueueDestinationsResource {
@@ -61,32 +61,37 @@ public class QueueDestinationsResource {
          JMSQueueConfiguration queue = FileJMSConfiguration.parseQueueConfiguration(document.getDocumentElement());
          ActiveMQQueue activeMQQueue = ActiveMQDestination.createQueue(queue.getName());
          String queueName = activeMQQueue.getAddress();
-         ClientSession session = manager.getSessionFactory().createSession(false, false, false);
-         try {
-
-            ClientSession.QueueQuery query = session.queueQuery(new SimpleString(queueName));
-            if (!query.isExists()) {
-               if (queue.getSelector() != null) {
-                  session.createQueue(queueName, queueName, queue.getSelector(), queue.isDurable());
-               } else {
-                  session.createQueue(queueName, queueName, queue.isDurable());
-               }
-
-            } else {
-               throw new WebApplicationException(Response.status(412).type("text/plain").entity("Queue already exists.").build());
-            }
-         } finally {
-            try {
-               session.close();
-            } catch (Exception ignored) {
-            }
-         }
+         createInternal( queueName, queue.getSelector(), queue.isDurable() );
          URI uri = uriInfo.getRequestUriBuilder().path(queueName).build();
          return Response.created(uri).build();
       } catch (Exception e) {
          if (e instanceof WebApplicationException)
             throw (WebApplicationException) e;
          throw new WebApplicationException(e, Response.serverError().type("text/plain").entity("Failed to create queue.").build());
+      }
+   }
+
+   protected void createInternal(String name, String selector, boolean durable) throws ActiveMQException
+   {
+      ClientSession session = manager.getSessionFactory().createSession(false, false, false);
+      try {
+
+         ClientSession.QueueQuery query = session.queueQuery(new SimpleString(name));
+         if (!query.isExists()) {
+            if (selector != null) {
+               session.createQueue(name, name, selector, durable);
+            } else {
+               session.createQueue(name, name, durable);
+            }
+
+         } else {
+            throw new WebApplicationException(Response.status(412).type("text/plain").entity("Queue already exists.").build());
+         }
+      } finally {
+         try {
+            session.close();
+         } catch (Exception ignored) {
+         }
       }
    }
 
@@ -101,12 +106,14 @@ public class QueueDestinationsResource {
          String queueName = name;
          ClientSession session = manager.getSessionFactory().createSession(false, false, false);
          try {
-            ClientSession.QueueQuery query = session.queueQuery(new SimpleString(queueName));
-            if (!query.isExists()) {
-               throw new WebApplicationException(Response.status(404).type("text/plain").entity("Queue '" + name + "' does not exist").build());
+            if(!manager.isClustered()) {
+               ClientSession.QueueQuery query = session.queueQuery(new SimpleString(queueName));
+               if (!query.isExists() ) {
+                  throw new WebApplicationException(Response.status(404).type("text/plain").entity("Queue '" + name + "' does not exist").build());
+               }
             }
             DestinationSettings queueSettings = manager.getDefaultSettings();
-            boolean defaultDurable = queueSettings.isDurableSend() || query.isDurable();
+            boolean defaultDurable = queueSettings.isDurableSend();
 
             queue = createQueueResource(queueName, defaultDurable, queueSettings.getConsumerSessionTimeoutSeconds(), queueSettings.isDuplicatesAllowed());
          } finally {

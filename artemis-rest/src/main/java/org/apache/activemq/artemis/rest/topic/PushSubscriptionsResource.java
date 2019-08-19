@@ -177,44 +177,58 @@ public class PushSubscriptionsResource {
    }
 
    private Response createNewSubscription(UriInfo uriInfo, PushTopicRegistration registration) {
-      String genId = sessionCounter.getAndIncrement() + "-topic-" + destination + "-" + startup;
-      if (registration.getDestination() == null) {
-         registration.setDestination(genId);
-      }
-      registration.setId(genId);
-      registration.setTopic(destination);
-      registration.setDisableOnFailure( true );
+       
+      String genId = performCreationOfSubscription(registration);
+      
+      UriBuilder location = uriInfo.getAbsolutePathBuilder();
+      location.path(genId);
+      return Response.created(location.build()).build();
+   }
 
-      ClientSession createSession = createSubscription(registration.getDestination(), registration.isDurable());
+   public void performCreationOrRestartSubscription(PushTopicRegistration registration) {
       try {
-         PushSubscription consumer = new PushSubscription(sessionFactory, registration.getDestination(), genId, registration, pushStore, jmsOptions);
-         try {
-            consumer.start();
-            if (registration.isDurable() && pushStore != null) {
-               pushStore.add(registration);
-            }
-         } catch (Exception e) {
-            consumer.stop();
-            throw new WebApplicationException(e, Response.serverError().entity("Failed to start consumer.").type("text/plain").build());
+         Optional<PushSubscription> existing = findBySubscriptionId(registration.getDestination());
+         if (existing.isPresent()) {
+            performRestartSubscription(existing.get());
+         } else {
+            performCreationOfSubscription(registration);
          }
-
-         consumers.put(genId, consumer);
-         UriBuilder location = uriInfo.getAbsolutePathBuilder();
-         location.path(genId);
-         return Response.created(location.build()).build();
-      } finally {
-         closeSession(createSession);
+      } catch (Exception ex) {
+         throw new RuntimeException(ex);
       }
    }
 
-   private Response restartSubscription(UriInfo uriInfo, PushSubscription subscription) {
-      subscription.getRegistration().setEnabled( true );
+    private String performCreationOfSubscription(PushTopicRegistration registration) throws WebApplicationException
+    {
+        String genId = sessionCounter.getAndIncrement() + "-topic-" + destination + "-" + startup;
+        if (registration.getDestination() == null) {
+            registration.setDestination(genId);
+        } 
+        registration.setId(genId);
+        registration.setTopic(destination);
+        registration.setDisableOnFailure( true );
+        ClientSession createSession = createSubscription(registration.getDestination(), registration.isDurable());
+        try {
+            PushSubscription consumer = new PushSubscription(sessionFactory, registration.getDestination(), genId, registration, pushStore, jmsOptions);
+            try {
+                consumer.start();
+                if (registration.isDurable() && pushStore != null) {
+                    pushStore.add(registration);
+                }
+            } catch (Exception e) {
+                consumer.stop();
+                throw new WebApplicationException(e, Response.serverError().entity("Failed to start consumer.").type("text/plain").build());
+            }
+            
+            consumers.put(genId, consumer);
+        } finally {
+            closeSession(createSession);
+        } return genId;
+    }
 
+   private Response restartSubscription(UriInfo uriInfo, PushSubscription subscription) {
       try {
-         subscription.start();
-         if (subscription.getRegistration().isDurable()) {
-            pushStore.update(subscription.getRegistration());
-         }
+         performRestartSubscription(subscription);
       } catch (Exception e) {
          subscription.stop();
          throw new WebApplicationException(e, Response.serverError().entity("Failed to start consumer.").type("text/plain").build());
@@ -223,6 +237,15 @@ public class PushSubscriptionsResource {
       UriBuilder location = uriInfo.getAbsolutePathBuilder();
       location.path(subscription.getRegistration().getId());
       return Response.created(location.build()).build();
+   }
+
+   private void performRestartSubscription(PushSubscription subscription) throws Exception {
+      subscription.getRegistration().setEnabled( true );
+
+      subscription.start();
+      if (subscription.getRegistration().isDurable()) {
+         pushStore.update(subscription.getRegistration());
+      }
    }
 
    private Optional<PushSubscription> findBySubscriptionId( String subscriptionId) {
@@ -237,7 +260,7 @@ public class PushSubscriptionsResource {
           .findAny();
    }
 
-   private void deleteSubscriberQueue(PushConsumer consumer) {
+   public void deleteSubscriberQueue(PushConsumer consumer) {
       String subscriptionName = consumer.getDestination();
       ClientSession session = null;
       try {

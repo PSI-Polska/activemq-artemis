@@ -16,18 +16,19 @@
  */
 package org.apache.activemq.artemis.rest.queue;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.stream.Collectors;
-
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.jms.client.ConnectionFactoryOptions;
+import org.apache.activemq.artemis.rest.ActiveMQRestLogger;
+import org.apache.activemq.artemis.rest.queue.push.DestinationPushStore;
 import org.apache.activemq.artemis.rest.queue.push.FilePushStore;
 import org.apache.activemq.artemis.rest.queue.push.PushStore;
 import org.apache.activemq.artemis.rest.queue.push.xml.PushRegistration;
-import org.apache.activemq.artemis.rest.topic.PushTopicRegistration;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class QueueServiceManager extends DestinationServiceManager {
 
@@ -35,8 +36,9 @@ public class QueueServiceManager extends DestinationServiceManager {
    protected List<QueueDeployment> queues = new ArrayList<>();
    protected QueueDestinationsResource destination;
 
-   public QueueServiceManager(ConnectionFactoryOptions jmsOptions) {
-      super(jmsOptions);
+   public QueueServiceManager(ConnectionFactoryOptions jmsOptions)
+   {
+      super(jmsOptions, "queue_storage");
    }
 
    public List<QueueDeployment> getQueues() {
@@ -71,6 +73,9 @@ public class QueueServiceManager extends DestinationServiceManager {
 
       started = true;
 
+      if (pushStoreQueuePrefix != null && pushStore == null){
+          pushStore = new DestinationPushStore(sessionFactory,unmarshaler, getPrivateQueueName(), getGlobalQueueName());
+      }
       if (pushStoreFile != null && pushStore == null) {
          pushStore = new FilePushStore(pushStoreFile);
       }
@@ -83,7 +88,21 @@ public class QueueServiceManager extends DestinationServiceManager {
       for (QueueDeployment queueDeployment : queues) {
          deploy(queueDeployment);
       }
+
+      startGlobalQueueHandler( content -> {
+             try
+             {
+                destination.createInternal( content.getDestination(), content.getSelector(), true );
+             }
+             catch( Exception aE )
+             {
+             }
+             ActiveMQRestLogger.LOGGER.info("Recreating push subscription for :"+content.getDestination());
+             QueueResource res = restartDestinationResource( () ->  destination.findQueue( content.getDestination() ));
+             res.getPushConsumers().performCreation( content );
+          } );
    }
+
 
    public void deploy(QueueDeployment queueDeployment) throws Exception {
       if (!started) {

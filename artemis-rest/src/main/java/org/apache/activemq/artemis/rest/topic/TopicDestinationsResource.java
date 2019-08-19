@@ -63,22 +63,7 @@ public class TopicDestinationsResource {
          TopicConfiguration topic = FileJMSConfiguration.parseTopicConfiguration(document.getDocumentElement());
          ActiveMQTopic activeMQTopic = ActiveMQDestination.createTopic(topic.getName());
          String topicName = activeMQTopic.getAddress();
-         ClientSession session = manager.getSessionFactory().createSession(false, false, false);
-         try {
-
-            ClientSession.AddressQuery query = session.addressQuery(new SimpleString(topicName));
-            if (!query.isExists()) {
-               session.createAddress(SimpleString.toSimpleString(topicName), RoutingType.MULTICAST, true);
-
-            } else {
-               throw new WebApplicationException(Response.status(412).type("text/plain").entity("Queue already exists.").build());
-            }
-         } finally {
-            try {
-               session.close();
-            } catch (Exception ignored) {
-            }
-         }
+         createInternal( topicName );
          URI uri = uriInfo.getRequestUriBuilder().path(topicName).build();
          return Response.created(uri).build();
       } catch (Exception e) {
@@ -88,16 +73,42 @@ public class TopicDestinationsResource {
       }
    }
 
+   public void createInternal(String topicName) throws ActiveMQException
+   {
+      ClientSession session = manager.getSessionFactory().createSession(false, false, false);
+      try {
+
+         ClientSession.AddressQuery query = session.addressQuery(new SimpleString(topicName));
+         if (!query.isExists()) {
+            session.createAddress(SimpleString.toSimpleString(topicName), RoutingType.MULTICAST, true);
+         } else {
+            throw new WebApplicationException(Response.status(412).type("text/plain").entity("Queue already exists.").build());
+         }
+      } finally {
+         try {
+            session.close();
+         } catch (Exception ignored) {
+         }
+      }
+   }
+
    @Path("/{topic-name}")
    public TopicResource findTopic(@PathParam("topic-name") String name) throws Exception {
       TopicResource topic = topics.get(name);
       if (topic == null) {
          ClientSession session = manager.getSessionFactory().createSession(false, false, false);
          try {
-            ClientSession.AddressQuery query = session.addressQuery(new SimpleString(name));
-            if (!query.isExists()) {
-               System.err.println("Topic '" + name + "' does not exist");
-               throw new WebApplicationException(Response.status(404).type("text/plain").entity("Topic '" + name + "' does not exist").build());
+            if(!manager.isClustered())
+            {
+               ClientSession.AddressQuery query = session.addressQuery( new SimpleString( name ) );
+               if( !query.isExists() )
+               {
+                  System.err.println( "Topic '" + name + "' does not exist" );
+                  throw new WebApplicationException( Response.status( 404 )
+                                                         .type( "text/plain" )
+                                                         .entity( "Topic '" + name + "' does not exist" )
+                                                         .build() );
+               }
             }
             DestinationSettings queueSettings = manager.getDefaultSettings();
             boolean defaultDurable = queueSettings.isDurableSend();

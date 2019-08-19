@@ -22,5 +22,7 @@ import org.apache.activemq.artemis.rest.queue.push.PushStore;
 
 public interface TopicPushStore extends PushStore {
 
-   List<PushTopicRegistration> getByTopic(String topic);
+   List<PushTopicRegistration> getTopicRegistrations() throws Exception;
+
+   List<PushTopicRegistration> getByTopic(String topic) throws Exception;
 }
