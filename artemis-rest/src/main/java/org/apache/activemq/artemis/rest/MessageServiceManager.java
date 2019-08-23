@@ -210,7 +210,7 @@ public class MessageServiceManager {
    }
 
    private String getNodeIdentifier(){
-      String hostname = System.getenv("CLUSTER_HOST");
+      String hostname = System.getenv("ARTEMIS_HOST");
       if(hostname != null){
          return hostname.toLowerCase();
       }else{
