@@ -257,7 +257,9 @@ public class ConsumersResource implements TimeoutTask.Callback {
 
    @Path("attributes-{attributes}/{consumer-id}")
    @DELETE
-   public void closeSession(@PathParam("consumer-id") String consumerId, @Context UriInfo uriInfo) {
+   public void closeSession(@PathParam("attributes") int attributes,
+                            @PathParam("consumer-id") String consumerId,
+                            @Context UriInfo uriInfo) {
       ActiveMQRestLogger.LOGGER.debug("Handling DELETE request for \"" + uriInfo.getPath() + "\"");
 
       QueueConsumer consumer = queueConsumers.remove(consumerId);
