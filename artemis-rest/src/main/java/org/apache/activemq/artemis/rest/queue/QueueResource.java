@@ -39,6 +39,7 @@ public class QueueResource extends DestinationResource {
    private QueueDestinationsResource queueDestinationsResource;
 
    public void start() throws Exception {
+      pushConsumers.start();
    }
 
    public void stop() {

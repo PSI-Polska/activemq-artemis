@@ -16,11 +16,7 @@
  */
 package org.apache.activemq.artemis.rest.topic;
 
-import javax.ws.rs.Consumes;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.WebApplicationException;
+import javax.ws.rs.*;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
@@ -30,9 +26,13 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.api.core.client.ClientMessage;
+import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.RoutingType;
+import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
 import org.apache.activemq.artemis.jms.client.ActiveMQTopic;
 import org.apache.activemq.artemis.jms.server.config.TopicConfiguration;
@@ -46,6 +46,8 @@ import org.w3c.dom.Document;
 
 @Path("/topics")
 public class TopicDestinationsResource {
+
+   public static final SimpleString UNREGISTRATION_QUEUE_NAME = new SimpleString("org.apache.activemq.artemis.rest.push.unregistration");
 
    private final Map<String, TopicResource> topics = new ConcurrentHashMap<>();
    private final TopicServiceManager manager;
@@ -70,6 +72,40 @@ public class TopicDestinationsResource {
          if (e instanceof WebApplicationException)
             throw (WebApplicationException) e;
          throw new WebApplicationException(e, Response.serverError().type("text/plain").entity("Failed to create queue.").build());
+      }
+   }
+
+   @DELETE
+   @Path("/{topic-name}/push-subscriptions/{consumer-id}")
+   public void deleteConsumer(@Context UriInfo uriInfo,
+                              @PathParam("topic-name") String name,
+                              @PathParam("consumer-id") String consumerId) {
+      ActiveMQRestLogger.LOGGER.debug("Handling DELETE request for \"" + uriInfo.getPath() + "\"");
+
+      ClientSessionFactory sessionFactory = manager.getSessionFactory();
+      try (ClientSession clientSession = sessionFactory.createSession(true, true);
+           ClientProducer clientProducer = clientSession.createProducer(UNREGISTRATION_QUEUE_NAME)) {
+         ClientSession.AddressQuery addressQuery = clientSession.addressQuery(UNREGISTRATION_QUEUE_NAME);
+         if (!addressQuery.isExists()) {
+            clientSession.createAddress(UNREGISTRATION_QUEUE_NAME, RoutingType.MULTICAST, false);
+         }
+
+         ClientSession.QueueQuery queueQuery = clientSession.queueQuery(UNREGISTRATION_QUEUE_NAME);
+         if (!queueQuery.isExists()) {
+            clientSession.createQueue(UNREGISTRATION_QUEUE_NAME, RoutingType.MULTICAST, UNREGISTRATION_QUEUE_NAME, true);
+         }
+
+         ClientMessage message = clientSession.createMessage(Message.TEXT_TYPE, true);
+         message.putStringProperty("routingType", RoutingType.MULTICAST.name());
+         message.putStringProperty("destination", name);
+         message.getBodyBuffer().writeUTF(consumerId);
+
+         clientProducer.send(message);
+      } catch (ActiveMQException ex) {
+         throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                                                        .entity("Could not delete consumer")
+                                                        .type("text/plain")
+                                                        .build(), ex);
       }
    }
 

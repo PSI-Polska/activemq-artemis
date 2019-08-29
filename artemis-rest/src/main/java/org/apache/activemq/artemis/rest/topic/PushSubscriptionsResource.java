@@ -16,7 +16,6 @@
  */
 package org.apache.activemq.artemis.rest.topic;
 
-import javax.ws.rs.DELETE;
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
@@ -33,14 +32,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
-import org.apache.activemq.artemis.api.core.client.ClientSession;
-import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
+import org.apache.activemq.artemis.api.core.client.*;
 import org.apache.activemq.artemis.jms.client.ConnectionFactoryOptions;
 import org.apache.activemq.artemis.rest.ActiveMQRestLogger;
 import org.apache.activemq.artemis.rest.queue.push.PushConsumer;
 
-public class PushSubscriptionsResource {
+public class PushSubscriptionsResource implements MessageHandler {
 
    protected Map<String, PushSubscription> consumers = new ConcurrentHashMap<>();
    protected ClientSessionFactory sessionFactory;
@@ -50,12 +49,55 @@ public class PushSubscriptionsResource {
    protected TopicPushStore pushStore;
 
    private ConnectionFactoryOptions jmsOptions;
+   private ClientSession session;
+   private ClientConsumer consumer;
 
    public PushSubscriptionsResource(ConnectionFactoryOptions jmsOptions) {
       this.jmsOptions = jmsOptions;
    }
 
+   @Override
+   public void onMessage(ClientMessage message) {
+      String consumerId = message.getBodyBuffer().readUTF();
+      deleteConsumer(consumerId);
+   }
+
+   public void start() {
+      try {
+         session = sessionFactory.createSession(true, true);
+
+         ClientSession.AddressQuery addressQuery = session.addressQuery(TopicDestinationsResource.UNREGISTRATION_QUEUE_NAME);
+         if (!addressQuery.isExists()) {
+            session.createAddress(TopicDestinationsResource.UNREGISTRATION_QUEUE_NAME, RoutingType.MULTICAST, false);
+         }
+
+         ClientSession.QueueQuery queueQuery = session.queueQuery(TopicDestinationsResource.UNREGISTRATION_QUEUE_NAME);
+         if (!queueQuery.isExists()) {
+            session.createQueue(TopicDestinationsResource.UNREGISTRATION_QUEUE_NAME, RoutingType.MULTICAST, TopicDestinationsResource.UNREGISTRATION_QUEUE_NAME, true);
+         }
+
+         SimpleString filter = new SimpleString(String.format("routingType = '%s' AND destination = '%s'", RoutingType.MULTICAST.name(), destination));
+         consumer = session.createConsumer(TopicDestinationsResource.UNREGISTRATION_QUEUE_NAME, filter);
+         consumer.setMessageHandler(this);
+
+         session.start();
+      } catch (ActiveMQException ex) {
+         ActiveMQRestLogger.LOGGER.error("Could not create session", ex);
+      }
+   }
+
    public void stop() {
+      try {
+         if (consumer != null && !consumer.isClosed()) {
+            consumer.close();
+         }
+         if (session != null && !session.isClosed()) {
+            session.close();
+         }
+      } catch (ActiveMQException ex) {
+         ActiveMQRestLogger.LOGGER.error("Could not close consumer or session", ex);
+      }
+
       for (PushConsumer consumer : consumers.values()) {
          consumer.stop();
          if (consumer.getRegistration().isDurable() == false) {
@@ -143,14 +185,12 @@ public class PushSubscriptionsResource {
       return (PushTopicRegistration) consumer.getRegistration();
    }
 
-   @DELETE
-   @Path("{consumer-id}")
-   public void deleteConsumer(@Context UriInfo uriInfo, @PathParam("consumer-id") String consumerId) {
-      ActiveMQRestLogger.LOGGER.debug("Handling DELETE request for \"" + uriInfo.getPath() + "\"");
+   public void deleteConsumer(String consumerId) {
+      ActiveMQRestLogger.LOGGER.removingPushSubscription(consumerId, destination);
 
       PushConsumer consumer = consumers.remove(consumerId);
       if (consumer == null) {
-         throw new WebApplicationException(Response.status(404).entity("Could not find consumer.").type("text/plain").build());
+         ActiveMQRestLogger.LOGGER.pushSubscriptionDoesNotExist(consumerId, destination);
       }
       consumer.stop();
       deleteSubscriberQueue(consumer);

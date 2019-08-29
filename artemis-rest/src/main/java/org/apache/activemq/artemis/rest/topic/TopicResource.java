@@ -39,6 +39,7 @@ public class TopicResource extends DestinationResource {
    private TopicDestinationsResource topicDestinationsResource;
 
    public void start() throws Exception {
+      pushSubscriptions.start();
    }
 
    public void stop() {

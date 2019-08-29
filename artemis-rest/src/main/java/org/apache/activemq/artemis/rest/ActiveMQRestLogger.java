@@ -56,6 +56,14 @@ public interface ActiveMQRestLogger extends BasicLogger {
    @Message(id = 181002, value = "Push consumer started for: {0}", format = Message.Format.MESSAGE_FORMAT)
    void startingPushConsumer(XmlLink link);
 
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 181003, value = "Removing push consumer \"{0}\" for queue \"{1}\"", format = Message.Format.MESSAGE_FORMAT)
+   void removingPushConsumer(String consumerId, String destination);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 181004, value = "Removing push subscription \"{0}\" for topic \"{1}\"", format = Message.Format.MESSAGE_FORMAT)
+   void removingPushSubscription(String consumerId, String destination);
+
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 182000, value = "shutdown REST consumer because of timeout for: {0}", format = Message.Format.MESSAGE_FORMAT)
    void shutdownRestConsumer(String id);
@@ -75,6 +83,14 @@ public interface ActiveMQRestLogger extends BasicLogger {
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 182004, value = "REST configuration parameter ''{0}'' is deprecated. Use ''{1}'' instead.", format = Message.Format.MESSAGE_FORMAT)
    void deprecatedConfiguration(String oldConfigParameter, String newConfigParameter);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 182005, value = "Push consumer \"{0}\" for queue \"{1}\" does not exists", format = Message.Format.MESSAGE_FORMAT)
+   void pushConsumerDoesNotExist(String consumerId, String destination);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 182006, value = "Push subscription \"{0}\" for topic \"{1}\" does not exists", format = Message.Format.MESSAGE_FORMAT)
+   void pushSubscriptionDoesNotExist(String subscriptionId, String destination);
 
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 184000, value = "Failed to load push store {0}, it is probably corrupted", format = Message.Format.MESSAGE_FORMAT)
