@@ -17,15 +17,8 @@
 package org.apache.activemq.artemis.rest.queue;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
-import org.apache.activemq.artemis.api.core.Message;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
-import org.apache.activemq.artemis.api.core.client.ClientMessage;
-import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
-import org.apache.activemq.artemis.api.core.client.ClientSession.AddressQuery;
-import org.apache.activemq.artemis.api.core.client.ClientSession.QueueQuery;
-import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
 import org.apache.activemq.artemis.jms.client.ActiveMQQueue;
 import org.apache.activemq.artemis.jms.server.config.JMSQueueConfiguration;
@@ -36,7 +29,11 @@ import org.apache.activemq.artemis.rest.queue.push.xml.PushRegistration;
 import org.apache.activemq.artemis.rest.util.Constants;
 import org.w3c.dom.Document;
 
-import javax.ws.rs.*;
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
@@ -47,8 +44,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Path(Constants.PATH_FOR_QUEUES)
 public class QueueDestinationsResource {
-
-   public static final SimpleString UNREGISTRATION_QUEUE_NAME = new SimpleString("org.apache.activemq.artemis.rest.push.unregistration");
 
    private final Map<String, QueueResource> queues = new ConcurrentHashMap<>();
    private final QueueServiceManager manager;
@@ -76,46 +71,12 @@ public class QueueDestinationsResource {
       }
    }
 
-   @DELETE
-   @Path("/{queue-name}/push-consumers/{consumer-id}")
-   public void deleteConsumer(@Context UriInfo uriInfo,
-                              @PathParam("queue-name") String name,
-                              @PathParam("consumer-id") String consumerId) {
-      ActiveMQRestLogger.LOGGER.debug("Handling DELETE request for \"" + uriInfo.getPath() + "\"");
-
-      ClientSessionFactory sessionFactory = manager.getSessionFactory();
-      try (ClientSession clientSession = sessionFactory.createSession(true, true);
-           ClientProducer clientProducer = clientSession.createProducer(UNREGISTRATION_QUEUE_NAME)) {
-         AddressQuery addressQuery = clientSession.addressQuery(UNREGISTRATION_QUEUE_NAME);
-         if (!addressQuery.isExists()) {
-            clientSession.createAddress(UNREGISTRATION_QUEUE_NAME, RoutingType.MULTICAST, false);
-         }
-
-         QueueQuery queueQuery = clientSession.queueQuery(UNREGISTRATION_QUEUE_NAME);
-         if (!queueQuery.isExists()) {
-            clientSession.createQueue(UNREGISTRATION_QUEUE_NAME, RoutingType.MULTICAST, UNREGISTRATION_QUEUE_NAME, true);
-         }
-
-         ClientMessage message = clientSession.createMessage(Message.TEXT_TYPE, true);
-         message.putStringProperty("routingType", RoutingType.ANYCAST.name());
-         message.putStringProperty("destination", name);
-         message.getBodyBuffer().writeUTF(consumerId);
-
-         clientProducer.send(message);
-      } catch (ActiveMQException ex) {
-         throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                                                        .entity("Could not delete consumer")
-                                                        .type("text/plain")
-                                                        .build(), ex);
-      }
-   }
-
    protected void createInternal(String name, String selector, boolean durable) throws ActiveMQException
    {
       ClientSession session = manager.getSessionFactory().createSession(false, false, false);
       try {
 
-         QueueQuery query = session.queueQuery(new SimpleString(name));
+         ClientSession.QueueQuery query = session.queueQuery(new SimpleString(name));
          if (!query.isExists()) {
             if (selector != null) {
                session.createQueue(name, name, selector, durable);
@@ -146,7 +107,7 @@ public class QueueDestinationsResource {
          ClientSession session = manager.getSessionFactory().createSession(false, false, false);
          try {
             if(!manager.isClustered()) {
-               QueueQuery query = session.queueQuery(new SimpleString(queueName));
+               ClientSession.QueueQuery query = session.queueQuery(new SimpleString(queueName));
                if (!query.isExists() ) {
                   throw new WebApplicationException(Response.status(404).type("text/plain").entity("Queue '" + name + "' does not exist").build());
                }

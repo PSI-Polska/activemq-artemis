@@ -16,29 +16,52 @@
  */
 package org.apache.activemq.artemis.rest.topic;
 
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.HEAD;
-import javax.ws.rs.Path;
-import javax.ws.rs.Produces;
+import javax.ws.rs.*;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriBuilder;
 import javax.ws.rs.core.UriInfo;
 
+import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
-import org.apache.activemq.artemis.api.core.client.ClientSession;
+import org.apache.activemq.artemis.api.core.client.*;
 import org.apache.activemq.artemis.rest.ActiveMQRestLogger;
 import org.apache.activemq.artemis.rest.queue.DestinationResource;
 import org.apache.activemq.artemis.rest.queue.PostMessage;
 
-public class TopicResource extends DestinationResource {
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+
+public class TopicResource extends DestinationResource implements MessageHandler {
+
+   private static final SimpleString TOPIC_REMOVE_QUEUE_NAME = new SimpleString("org.apache.activemq.artemis.rest.topic.remove");
+   private static final String TOPIC_REMOVE_DESTINATION_PARAM = "destination";
+
+   private static final SimpleString TOPIC_REMOVE_REPLY_QUEUE_NAME = new SimpleString("org.apache.activemq.artemis.rest.topic.remove.reply");
+   private static final String TOPIC_REMOVE_REPLY_ID_PARAM = "replyId";
+   private static final String TOPIC_REMOVE_SUCCESS_FLAG_PARAM = "success";
 
    protected SubscriptionsResource subscriptions;
    protected PushSubscriptionsResource pushSubscriptions;
    private TopicDestinationsResource topicDestinationsResource;
 
+   private ClientSession session;
+
    public void start() throws Exception {
+      createRemovalTopicIfNeeded();
+
+      ClientSessionFactory sessionFactory = serviceManager.getConsumerSessionFactory();
+      session = sessionFactory.createSession(true, true);
+
+
+      String filter = String.format("%s = '%s'", TOPIC_REMOVE_DESTINATION_PARAM, destination);
+      ClientConsumer consumer = session.createConsumer(TOPIC_REMOVE_QUEUE_NAME, new SimpleString(filter));
+      consumer.setMessageHandler(this);
+
+      session.start();
+
       pushSubscriptions.start();
    }
 
@@ -46,6 +69,15 @@ public class TopicResource extends DestinationResource {
       subscriptions.stop();
       pushSubscriptions.stop();
       sender.cleanup();
+
+      try {
+         if (session != null && !session.isClosed()) {
+            session.close();
+            session = null;
+         }
+      } catch (ActiveMQException ex) {
+         ActiveMQRestLogger.LOGGER.error("Could not close session", ex);
+      }
    }
 
    @GET
@@ -155,6 +187,75 @@ public class TopicResource extends DestinationResource {
    public void deleteTopic(@Context UriInfo uriInfo) throws Exception {
       ActiveMQRestLogger.LOGGER.debug("Handling DELETE request for \"" + uriInfo.getPath() + "\"");
 
+      createRemovalTopicIfNeeded();
+
+      UUID replyId = UUID.randomUUID();
+      String filter = String.format("%s = '%s'", TOPIC_REMOVE_REPLY_ID_PARAM, replyId);
+
+      ClientSessionFactory sessionFactory = serviceManager.getSessionFactory();
+      try (ClientSession clientSession = sessionFactory.createSession(true, true);
+           ClientProducer clientProducer = clientSession.createProducer(TOPIC_REMOVE_QUEUE_NAME);
+           ClientConsumer replyConsumer = clientSession.createConsumer(TOPIC_REMOVE_REPLY_QUEUE_NAME, new SimpleString(filter))) {
+         ClientMessage message = clientSession.createMessage(Message.TEXT_TYPE, true);
+         message.putStringProperty(TOPIC_REMOVE_DESTINATION_PARAM, destination);
+         message.putStringProperty(TOPIC_REMOVE_REPLY_ID_PARAM, replyId.toString());
+         message.setReplyTo(TOPIC_REMOVE_REPLY_QUEUE_NAME);
+
+         clientProducer.send(message);
+
+         clientSession.start();
+
+         ClientMessage reply = replyConsumer.receive(TimeUnit.SECONDS.toMillis(8L));
+         if (reply != null) {
+            reply.acknowledge();
+         }
+
+         clientSession.commit();
+
+         if (reply == null || !reply.getBooleanProperty(TOPIC_REMOVE_SUCCESS_FLAG_PARAM)) {
+            throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                                                           .entity("Could not remove topic")
+                                                           .type("text/plain")
+                                                           .build());
+         }
+      } catch (ActiveMQException ex) {
+         throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                                                        .entity("Could not remove topic")
+                                                        .type("text/plain")
+                                                        .build(), ex);
+      }
+   }
+
+   @Override
+   public void onMessage(ClientMessage message) {
+      ClientSessionFactory sessionFactory = serviceManager.getSessionFactory();
+      try (ClientSession clientSession = sessionFactory.createSession(true, true);
+           ClientProducer producer = clientSession.createProducer(message.getReplyTo())) {
+         ClientMessage reply = clientSession.createMessage(ClientMessage.TEXT_TYPE, true);
+         reply.putStringProperty(TOPIC_REMOVE_REPLY_ID_PARAM, message.getStringProperty(TOPIC_REMOVE_REPLY_ID_PARAM));
+         try {
+            message.acknowledge();
+            session.commit();
+
+            deleteTopic();
+
+            reply.putBooleanProperty(TOPIC_REMOVE_SUCCESS_FLAG_PARAM, true);
+         } catch (Exception ex) {
+            reply.putBooleanProperty(TOPIC_REMOVE_SUCCESS_FLAG_PARAM, false);
+
+            ActiveMQRestLogger.LOGGER.warn("Could not remove topic", ex);
+         } finally {
+            reply.setExpiration(System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10L));
+            producer.send(reply);
+         }
+      } catch (ActiveMQException ex) {
+         ActiveMQRestLogger.LOGGER.error("Could not send reply", ex);
+      }
+   }
+
+   public void deleteTopic() throws ActiveMQException {
+      ActiveMQRestLogger.LOGGER.removingTopic(destination);
+
       topicDestinationsResource.getTopics().remove(destination);
 
       try {
@@ -162,20 +263,44 @@ public class TopicResource extends DestinationResource {
       } catch (Exception ignored) {
       }
 
-      ClientSession session = serviceManager.getSessionFactory().createSession(false, false, false);
-      try {
+      try (ClientSession session = serviceManager.getSessionFactory().createSession(false, false, false)) {
          SimpleString topicName = new SimpleString(destination);
          session.deleteQueue(topicName);
-      } finally {
-         try {
-            session.close();
-         } catch (Exception ignored) {
-         }
       }
 
    }
 
    public void setTopicDestinationsResource(TopicDestinationsResource topicDestinationsResource) {
       this.topicDestinationsResource = topicDestinationsResource;
+   }
+
+   private synchronized void createRemovalTopicIfNeeded() {
+      ClientSessionFactory sessionFactory = serviceManager.getSessionFactory();
+      try (ClientSession clientSession = sessionFactory.createSession(false, false, false)) {
+         ClientSession.AddressQuery addressQuery = clientSession.addressQuery(TOPIC_REMOVE_QUEUE_NAME);
+         if (!addressQuery.isExists()) {
+            clientSession.createAddress(TOPIC_REMOVE_QUEUE_NAME, RoutingType.MULTICAST, false);
+         }
+
+         addressQuery = clientSession.addressQuery(TOPIC_REMOVE_REPLY_QUEUE_NAME);
+         if (!addressQuery.isExists()) {
+            clientSession.createAddress(TOPIC_REMOVE_REPLY_QUEUE_NAME, RoutingType.ANYCAST, false);
+         }
+
+         ClientSession.QueueQuery queueQuery = clientSession.queueQuery(TOPIC_REMOVE_QUEUE_NAME);
+         if (!queueQuery.isExists()) {
+            clientSession.createQueue(TOPIC_REMOVE_QUEUE_NAME, RoutingType.MULTICAST, TOPIC_REMOVE_QUEUE_NAME, true);
+         }
+
+         queueQuery = clientSession.queueQuery(TOPIC_REMOVE_REPLY_QUEUE_NAME);
+         if (!queueQuery.isExists()) {
+            clientSession.createQueue(TOPIC_REMOVE_REPLY_QUEUE_NAME, RoutingType.ANYCAST, TOPIC_REMOVE_REPLY_QUEUE_NAME, true);
+         }
+      } catch (ActiveMQException ex) {
+         throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                                                        .entity("Could not create topic removal destination")
+                                                        .type("text/plain")
+                                                        .build(), ex);
+      }
    }
 }
