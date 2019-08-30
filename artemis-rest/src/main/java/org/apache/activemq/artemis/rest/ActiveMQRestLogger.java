@@ -64,6 +64,14 @@ public interface ActiveMQRestLogger extends BasicLogger {
    @Message(id = 181004, value = "Removing push subscription \"{0}\" for topic \"{1}\"", format = Message.Format.MESSAGE_FORMAT)
    void removingPushSubscription(String consumerId, String destination);
 
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 181005, value = "Removing queue \"{0}\"", format = Message.Format.MESSAGE_FORMAT)
+   void removingQueue(String destination);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 181006, value = "Removing topic \"{0}\"", format = Message.Format.MESSAGE_FORMAT)
+   void removingTopic(String destination);
+
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 182000, value = "shutdown REST consumer because of timeout for: {0}", format = Message.Format.MESSAGE_FORMAT)
    void shutdownRestConsumer(String id);
