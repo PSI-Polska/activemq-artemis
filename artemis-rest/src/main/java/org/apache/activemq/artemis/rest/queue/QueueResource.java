@@ -49,7 +49,6 @@ public class QueueResource extends DestinationResource implements MessageHandler
    private static final String QUEUE_REMOVE_REPLY_ID_PARAM = "replyId";
 
    private final SimpleString queueRemoveQueueName = new SimpleString(UUID.randomUUID().toString());
-   private final SimpleString queueRemoveReplyQueueName = new SimpleString(UUID.randomUUID().toString());
 
    protected ConsumersResource consumers;
    protected PushConsumerResource pushConsumers;
@@ -84,7 +83,6 @@ public class QueueResource extends DestinationResource implements MessageHandler
          }
 
          clientSession.deleteQueue(queueRemoveQueueName);
-         clientSession.deleteQueue(queueRemoveReplyQueueName);
       } catch (ActiveMQException ex) {
          ActiveMQRestLogger.LOGGER.error("Could not close session", ex);
       }
@@ -201,15 +199,13 @@ public class QueueResource extends DestinationResource implements MessageHandler
    public void deleteQueue(@Context UriInfo uriInfo) {
       ActiveMQRestLogger.LOGGER.debug("Handling DELETE request for \"" + uriInfo.getPath() + "\"");
 
-      UUID replyId = UUID.randomUUID();
-      String filter = String.format("%s = '%s'", QUEUE_REMOVE_REPLY_ID_PARAM, replyId);
+      UUID id = UUID.randomUUID();
 
       ClientSessionFactory sessionFactory = serviceManager.getSessionFactory();
       try (ClientSession clientSession = sessionFactory.createSession();
-           ClientProducer clientProducer = clientSession.createProducer(QUEUE_REMOVE_ADDRESS);
-           ClientConsumer replyConsumer = clientSession.createConsumer(queueRemoveReplyQueueName, new SimpleString(filter))) {
+           ClientProducer clientProducer = clientSession.createProducer(QUEUE_REMOVE_ADDRESS)) {
          ClientMessage message = clientSession.createMessage(Message.TEXT_TYPE, true);
-         message.putStringProperty(QUEUE_REMOVE_REPLY_ID_PARAM, replyId.toString());
+         message.putStringProperty(QUEUE_REMOVE_REPLY_ID_PARAM, id.toString());
          message.putStringProperty(QUEUE_REMOVE_DESTINATION_PARAM, destination);
          message.setReplyTo(QUEUE_REMOVE_REPLY_ADDRESS);
 
@@ -217,15 +213,23 @@ public class QueueResource extends DestinationResource implements MessageHandler
 
          clientSession.start();
 
-         ClientMessage reply = replyConsumer.receive(TimeUnit.SECONDS.toMillis(5L));
-
          QueueRemoveStatus status = QueueRemoveStatus.FAILURE;
-         if (reply != null) {
-            reply.acknowledge();
-            status = QueueRemoveStatus.valueOf(reply.getBodyBuffer().readUTF());
-         }
 
-         clientSession.commit();
+         SimpleString replyQueueName = new SimpleString(id.toString());
+         SimpleString replyQueueFilter = creteQueueFilter();
+         clientSession.createTemporaryQueue(QUEUE_REMOVE_REPLY_ADDRESS, RoutingType.MULTICAST, replyQueueName, replyQueueFilter);
+
+         String replyConsumerFilter = String.format("%s = '%s'", QUEUE_REMOVE_REPLY_ID_PARAM, id);
+         try (ClientConsumer replyConsumer = clientSession.createConsumer(replyQueueName, new SimpleString(replyConsumerFilter))) {
+            ClientMessage reply = replyConsumer.receive(TimeUnit.SECONDS.toMillis(5L));
+            if (reply != null) {
+               reply.acknowledge();
+               status = QueueRemoveStatus.valueOf(reply.getBodyBuffer().readUTF());
+            }
+         } finally {
+            clientSession.commit();
+            clientSession.deleteQueue(replyQueueName);
+         }
 
          if (status == QueueRemoveStatus.FAILURE) {
             throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
@@ -263,6 +267,9 @@ public class QueueResource extends DestinationResource implements MessageHandler
                reply.getBodyBuffer().writeUTF(status.name());
                reply.setExpiration(System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10L));
                producer.send(reply);
+            } else {
+               queueDestinationsResource.getQueues().remove(destination);
+               stop();
             }
          }
       } catch (Exception ex) {
@@ -304,16 +311,11 @@ public class QueueResource extends DestinationResource implements MessageHandler
             clientSession.createAddress(QUEUE_REMOVE_REPLY_ADDRESS, RoutingType.MULTICAST, false);
          }
 
-         String filter = String.format("%s = '%s'", QUEUE_REMOVE_DESTINATION_PARAM, destination);
+         SimpleString filter = creteQueueFilter();
 
          QueueQuery queueQuery = clientSession.queueQuery(queueRemoveQueueName);
          if (!queueQuery.isExists()) {
-            clientSession.createQueue(QUEUE_REMOVE_ADDRESS, RoutingType.MULTICAST, queueRemoveQueueName, new SimpleString(filter), true);
-         }
-
-         queueQuery = clientSession.queueQuery(queueRemoveReplyQueueName);
-         if (!queueQuery.isExists()) {
-            clientSession.createQueue(QUEUE_REMOVE_REPLY_ADDRESS, RoutingType.MULTICAST, queueRemoveReplyQueueName, new SimpleString(filter), true);
+            clientSession.createQueue(QUEUE_REMOVE_ADDRESS, RoutingType.MULTICAST, queueRemoveQueueName, filter, true);
          }
       } catch (ActiveMQException ex) {
          throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
@@ -321,5 +323,10 @@ public class QueueResource extends DestinationResource implements MessageHandler
                                                         .type("text/plain")
                                                         .build(), ex);
       }
+   }
+
+   private SimpleString creteQueueFilter() {
+      String filter = String.format("%s = '%s'", QUEUE_REMOVE_DESTINATION_PARAM, destination);
+      return new SimpleString(filter);
    }
 }
