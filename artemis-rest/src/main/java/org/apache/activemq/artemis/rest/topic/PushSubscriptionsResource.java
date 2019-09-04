@@ -39,12 +39,18 @@ import org.apache.activemq.artemis.rest.queue.push.PushConsumer;
 
 public class PushSubscriptionsResource implements MessageHandler {
 
-   private static final SimpleString SUBSCRIPTION_REMOVE_QUEUE_NAME = new SimpleString("org.apache.activemq.artemis.rest.push.subscription.remove");
+   private enum PushSubscriptionRemoveStatus {
+      SUCCESS, SUBSCRIPTION_NOT_FOUND, FAILURE
+   }
+
+   private static final SimpleString SUBSCRIPTION_REMOVE_ADDRESS = new SimpleString("org.apache.activemq.artemis.rest.push.subscription.remove");
    private static final String SUBSCRIPTION_REMOVE_DESTINATION_PARAM = "destination";
 
-   private static final SimpleString SUBSCRIPTION_REMOVE_REPLY_QUEUE_NAME = new SimpleString("org.apache.activemq.artemis.rest.push.subscription.remove.reply");
+   private static final SimpleString SUBSCRIPTION_REMOVE_REPLY_ADDRESS = new SimpleString("org.apache.activemq.artemis.rest.push.subscription.remove.reply");
    private static final String SUBSCRIPTION_REMOVE_REPLY_ID_PARAM = "replyId";
-   private static final String SUBSCRIPTION_REMOVE_SUCCESS_FLAG_PARAM = "success";
+
+   private final SimpleString subscriptionRemoveQueueName = new SimpleString(UUID.randomUUID().toString());
+   private final SimpleString subscriptionRemoveReplyQueueName = new SimpleString(UUID.randomUUID().toString());
 
    protected Map<String, PushSubscription> consumers = new ConcurrentHashMap<>();
    protected ClientSessionFactory sessionFactory;
@@ -65,19 +71,21 @@ public class PushSubscriptionsResource implements MessageHandler {
 
       session = sessionFactory.createSession();
 
-      String filter = String.format("%s = '%s'", SUBSCRIPTION_REMOVE_DESTINATION_PARAM, destination);
-      ClientConsumer consumer = session.createConsumer(SUBSCRIPTION_REMOVE_QUEUE_NAME, new SimpleString(filter));
+      ClientConsumer consumer = session.createConsumer(subscriptionRemoveQueueName);
       consumer.setMessageHandler(this);
 
       session.start();
    }
 
    public void stop() {
-      try {
+      try (ClientSession clientSession = sessionFactory.createSession(false, false, false)) {
          if (session != null && !session.isClosed()) {
             session.close();
             session = null;
          }
+
+         clientSession.deleteQueue(subscriptionRemoveQueueName);
+         clientSession.deleteQueue(subscriptionRemoveReplyQueueName);
       } catch (ActiveMQException ex) {
          ActiveMQRestLogger.LOGGER.error("Could not close session", ex);
       }
@@ -157,12 +165,12 @@ public class PushSubscriptionsResource implements MessageHandler {
    }
 
    @GET
-   @Path("{consumer-id}")
+   @Path("{subscription-id}")
    @Produces("application/xml")
-   public PushTopicRegistration getConsumer(@Context UriInfo uriInfo, @PathParam("consumer-id") String consumerId) {
+   public PushTopicRegistration getConsumer(@Context UriInfo uriInfo, @PathParam("subscription-id") String subscriptionId) {
       ActiveMQRestLogger.LOGGER.debug("Handling GET request for \"" + uriInfo.getPath() + "\"");
 
-      PushConsumer consumer = consumers.get(consumerId);
+      PushConsumer consumer = consumers.get(subscriptionId);
       if (consumer == null) {
          throw new WebApplicationException(Response.status(404).entity("Could not find consumer.").type("text/plain").build());
       }
@@ -170,47 +178,47 @@ public class PushSubscriptionsResource implements MessageHandler {
    }
 
    @DELETE
-   @Path("{consumer-id}")
-   public void deleteConsumer(@Context UriInfo uriInfo, @PathParam("consumer-id") String consumerId) {
+   @Path("{subscription-id}")
+   public void deleteSubscription(@Context UriInfo uriInfo, @PathParam("subscription-id") String subscriptionId) {
       ActiveMQRestLogger.LOGGER.debug("Handling DELETE request for \"" + uriInfo.getPath() + "\"");
-
-      createUnregistrationTopicIfNeeded();
 
       UUID replyId = UUID.randomUUID();
       String filter = String.format("%s = '%s'", SUBSCRIPTION_REMOVE_REPLY_ID_PARAM, replyId);
 
       try (ClientSession clientSession = getSessionFactory().createSession();
-           ClientProducer clientProducer = clientSession.createProducer(SUBSCRIPTION_REMOVE_QUEUE_NAME);
-           ClientConsumer replyConsumer = clientSession.createConsumer(SUBSCRIPTION_REMOVE_REPLY_QUEUE_NAME, new SimpleString(filter))) {
+           ClientProducer clientProducer = clientSession.createProducer(SUBSCRIPTION_REMOVE_ADDRESS);
+           ClientConsumer replyConsumer = clientSession.createConsumer(subscriptionRemoveReplyQueueName, new SimpleString(filter))) {
          ClientMessage message = clientSession.createMessage(Message.TEXT_TYPE, true);
          message.putStringProperty(SUBSCRIPTION_REMOVE_REPLY_ID_PARAM, replyId.toString());
          message.putStringProperty(SUBSCRIPTION_REMOVE_DESTINATION_PARAM, destination);
-         message.setReplyTo(SUBSCRIPTION_REMOVE_REPLY_QUEUE_NAME);
-         message.getBodyBuffer().writeUTF(consumerId);
+         message.setReplyTo(SUBSCRIPTION_REMOVE_REPLY_ADDRESS);
+         message.getBodyBuffer().writeUTF(subscriptionId);
 
          clientProducer.send(message);
 
          clientSession.start();
 
-         ClientMessage reply = replyConsumer.receive(TimeUnit.SECONDS.toMillis(8L));
+         ClientMessage reply = replyConsumer.receive(TimeUnit.SECONDS.toMillis(5L));
+
+         PushSubscriptionRemoveStatus status = PushSubscriptionRemoveStatus.SUBSCRIPTION_NOT_FOUND;
          if (reply != null) {
             reply.acknowledge();
+            status = PushSubscriptionRemoveStatus.valueOf(reply.getBodyBuffer().readUTF());
          }
 
          clientSession.commit();
 
-         if (reply == null) {
-            throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                                                           .entity("Could not delete consumer")
-                                                           .type("text/plain")
-                                                           .build());
-         } else if (!reply.getBooleanProperty("success")) {
+         if (status == PushSubscriptionRemoveStatus.SUBSCRIPTION_NOT_FOUND) {
             throw new NotFoundException(Response.status(Response.Status.NOT_FOUND)
                                                 .entity("Could not find subscription")
                                                 .type("text/plain")
                                                 .build());
+         } else if (status == PushSubscriptionRemoveStatus.FAILURE) {
+            throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                                                           .entity("Could not delete consumer")
+                                                           .type("text/plain")
+                                                           .build());
          }
-
       } catch (ActiveMQException ex) {
          throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
                                                         .entity("Could not delete consumer")
@@ -221,41 +229,48 @@ public class PushSubscriptionsResource implements MessageHandler {
 
    @Override
    public void onMessage(ClientMessage message) {
-      try (ClientSession clientSession = getSessionFactory().createSession();
-           ClientProducer producer = clientSession.createProducer(message.getReplyTo())) {
-         ClientMessage reply = clientSession.createMessage(ClientMessage.TEXT_TYPE, true);
-         reply.putStringProperty(SUBSCRIPTION_REMOVE_REPLY_ID_PARAM, message.getStringProperty(SUBSCRIPTION_REMOVE_REPLY_ID_PARAM));
-         try {
-            String consumerId = message.getBodyBuffer().readUTF();
+      try {
+         message.acknowledge();
+         session.commit();
 
-            message.acknowledge();
-            session.commit();
+         String subscriptionId = message.getBodyBuffer().readUTF();
+         boolean hasConsumer = consumers.containsKey(subscriptionId);
+         if (hasConsumer) {
+            PushSubscriptionRemoveStatus status = deleteSubscription(subscriptionId);
 
-            deleteConsumer(consumerId);
-
-            reply.putBooleanProperty(SUBSCRIPTION_REMOVE_SUCCESS_FLAG_PARAM, true);
-         } catch (Exception ex) {
-            reply.putBooleanProperty(SUBSCRIPTION_REMOVE_SUCCESS_FLAG_PARAM, false);
-
-            ActiveMQRestLogger.LOGGER.warn("Could not remove subscription", ex);
-         } finally {
-            reply.setExpiration(System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10L));
-            producer.send(reply);
+            try (ClientSession clientSession = getSessionFactory().createSession();
+                 ClientProducer producer = clientSession.createProducer(message.getReplyTo())) {
+               ClientMessage reply = clientSession.createMessage(ClientMessage.TEXT_TYPE, true);
+               reply.putStringProperty(SUBSCRIPTION_REMOVE_DESTINATION_PARAM, message.getStringProperty(SUBSCRIPTION_REMOVE_DESTINATION_PARAM));
+               reply.putStringProperty(SUBSCRIPTION_REMOVE_REPLY_ID_PARAM, message.getStringProperty(SUBSCRIPTION_REMOVE_REPLY_ID_PARAM));
+               reply.getBodyBuffer().writeUTF(status.name());
+               reply.setExpiration(System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10L));
+               producer.send(reply);
+            }
          }
+
       } catch (ActiveMQException ex) {
          ActiveMQRestLogger.LOGGER.error("Could not send reply", ex);
       }
    }
 
-   private void deleteConsumer(String consumerId) {
-      ActiveMQRestLogger.LOGGER.removingPushSubscription(consumerId, destination);
+   private PushSubscriptionRemoveStatus deleteSubscription(String subscriptionId) {
+      try {
+         ActiveMQRestLogger.LOGGER.removingPushSubscription(subscriptionId, destination);
 
-      PushConsumer consumer = consumers.remove(consumerId);
-      if (consumer == null) {
-         throw new NullPointerException("Could not find subscription");
+         PushConsumer consumer = consumers.remove(subscriptionId);
+         if (consumer == null) {
+            return PushSubscriptionRemoveStatus.SUBSCRIPTION_NOT_FOUND;
+         }
+         consumer.stop();
+         deleteSubscriberQueue(consumer);
+
+         return PushSubscriptionRemoveStatus.SUCCESS;
+      } catch (Exception ex) {
+         ActiveMQRestLogger.LOGGER.error("Could not remove subscription", ex);
+
+         return PushSubscriptionRemoveStatus.FAILURE;
       }
-      consumer.stop();
-      deleteSubscriberQueue(consumer);
    }
 
    public Map<String, PushSubscription> getConsumers() {
@@ -377,24 +392,26 @@ public class PushSubscriptionsResource implements MessageHandler {
 
    private synchronized void createUnregistrationTopicIfNeeded() {
       try (ClientSession clientSession = getSessionFactory().createSession(false, false, false)) {
-         ClientSession.AddressQuery addressQuery = clientSession.addressQuery(SUBSCRIPTION_REMOVE_QUEUE_NAME);
+         ClientSession.AddressQuery addressQuery = clientSession.addressQuery(SUBSCRIPTION_REMOVE_ADDRESS);
          if (!addressQuery.isExists()) {
-            clientSession.createAddress(SUBSCRIPTION_REMOVE_QUEUE_NAME, RoutingType.MULTICAST, false);
+            clientSession.createAddress(SUBSCRIPTION_REMOVE_ADDRESS, RoutingType.MULTICAST, false);
          }
 
-         addressQuery = clientSession.addressQuery(SUBSCRIPTION_REMOVE_REPLY_QUEUE_NAME);
+         addressQuery = clientSession.addressQuery(SUBSCRIPTION_REMOVE_REPLY_ADDRESS);
          if (!addressQuery.isExists()) {
-            clientSession.createAddress(SUBSCRIPTION_REMOVE_REPLY_QUEUE_NAME, RoutingType.ANYCAST, false);
+            clientSession.createAddress(SUBSCRIPTION_REMOVE_REPLY_ADDRESS, RoutingType.MULTICAST, false);
          }
 
-         ClientSession.QueueQuery queueQuery = clientSession.queueQuery(SUBSCRIPTION_REMOVE_QUEUE_NAME);
+         String filter = String.format("%s = '%s'", SUBSCRIPTION_REMOVE_DESTINATION_PARAM, destination);
+
+         ClientSession.QueueQuery queueQuery = clientSession.queueQuery(subscriptionRemoveQueueName);
          if (!queueQuery.isExists()) {
-            clientSession.createQueue(SUBSCRIPTION_REMOVE_QUEUE_NAME, RoutingType.MULTICAST, SUBSCRIPTION_REMOVE_QUEUE_NAME, true);
+            clientSession.createQueue(SUBSCRIPTION_REMOVE_ADDRESS, RoutingType.MULTICAST, subscriptionRemoveQueueName, new SimpleString(filter), true);
          }
 
-         queueQuery = clientSession.queueQuery(SUBSCRIPTION_REMOVE_REPLY_QUEUE_NAME);
+         queueQuery = clientSession.queueQuery(subscriptionRemoveReplyQueueName);
          if (!queueQuery.isExists()) {
-            clientSession.createQueue(SUBSCRIPTION_REMOVE_REPLY_QUEUE_NAME, RoutingType.ANYCAST, SUBSCRIPTION_REMOVE_REPLY_QUEUE_NAME, true);
+            clientSession.createQueue(SUBSCRIPTION_REMOVE_REPLY_ADDRESS, RoutingType.MULTICAST, subscriptionRemoveReplyQueueName, new SimpleString(filter), true);
          }
       } catch (ActiveMQException ex) {
          throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)

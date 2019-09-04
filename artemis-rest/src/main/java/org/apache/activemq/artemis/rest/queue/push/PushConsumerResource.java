@@ -38,12 +38,18 @@ import org.apache.activemq.artemis.rest.queue.push.xml.PushRegistration;
 
 public class PushConsumerResource implements MessageHandler {
 
-   private static final SimpleString CONSUMER_REMOVE_QUEUE_NAME = new SimpleString("org.apache.activemq.artemis.rest.push.consumer.remove");
+   private enum PushConsumerRemoveStatus {
+      SUCCESS, CONSUMER_NOT_FOUND, FAILURE
+   }
+
+   private static final SimpleString CONSUMER_REMOVE_ADDRESS = new SimpleString("org.apache.activemq.artemis.rest.push.consumer.remove");
    private static final String CONSUMER_REMOVE_DESTINATION_PARAM = "destination";
 
-   private static final SimpleString CONSUMER_REMOVE_REPLY_QUEUE_NAME = new SimpleString("org.apache.activemq.artemis.rest.push.consumer.remove.reply");
+   private static final SimpleString CONSUMER_REMOVE_REPLY_ADDRESS = new SimpleString("org.apache.activemq.artemis.rest.push.consumer.remove.reply");
    private static final String CONSUMER_REMOVE_REPLY_ID_PARAM = "replyId";
-   private static final String CONSUMER_REMOVE_SUCCESS_FLAG_PARAM = "success";
+
+   private final SimpleString consumerRemoveQueueName = new SimpleString(UUID.randomUUID().toString());
+   private final SimpleString consumerRemoveReplyQueueName = new SimpleString(UUID.randomUUID().toString());
 
    protected Map<String, PushConsumer> consumers = new ConcurrentHashMap<>();
    protected ClientSessionFactory sessionFactory;
@@ -60,19 +66,21 @@ public class PushConsumerResource implements MessageHandler {
 
       session = sessionFactory.createSession();
 
-      String filter = String.format("%s = '%s'", CONSUMER_REMOVE_DESTINATION_PARAM, destination);
-      ClientConsumer consumer = session.createConsumer(CONSUMER_REMOVE_QUEUE_NAME, new SimpleString(filter));
+      ClientConsumer consumer = session.createConsumer(consumerRemoveQueueName);
       consumer.setMessageHandler(this);
 
       session.start();
    }
 
    public void stop() {
-      try {
+      try (ClientSession clientSession = sessionFactory.createSession(false, false, false)) {
          if (session != null && !session.isClosed()) {
             session.close();
             session = null;
          }
+
+         clientSession.deleteQueue(consumerRemoveQueueName);
+         clientSession.deleteQueue(consumerRemoveReplyQueueName);
       } catch (ActiveMQException ex) {
          ActiveMQRestLogger.LOGGER.error("Could not close session", ex);
       }
@@ -147,41 +155,42 @@ public class PushConsumerResource implements MessageHandler {
    public void deleteConsumer(@Context UriInfo uriInfo, @PathParam("consumer-id") String consumerId) {
       ActiveMQRestLogger.LOGGER.debug("Handling DELETE request for \"" + uriInfo.getPath() + "\"");
 
-      createUnregistrationTopicIfNeeded();
-
       UUID replyId = UUID.randomUUID();
       String filter = String.format("%s = '%s'", CONSUMER_REMOVE_REPLY_ID_PARAM, replyId);
 
       try (ClientSession clientSession = getSessionFactory().createSession();
-           ClientProducer clientProducer = clientSession.createProducer(CONSUMER_REMOVE_QUEUE_NAME);
-           ClientConsumer replyConsumer = clientSession.createConsumer(CONSUMER_REMOVE_REPLY_QUEUE_NAME, new SimpleString(filter))) {
+           ClientProducer clientProducer = clientSession.createProducer(CONSUMER_REMOVE_ADDRESS);
+           ClientConsumer replyConsumer = clientSession.createConsumer(consumerRemoveReplyQueueName, new SimpleString(filter))) {
          ClientMessage message = clientSession.createMessage(Message.TEXT_TYPE, true);
          message.putStringProperty(CONSUMER_REMOVE_REPLY_ID_PARAM, replyId.toString());
          message.putStringProperty(CONSUMER_REMOVE_DESTINATION_PARAM, destination);
-         message.setReplyTo(CONSUMER_REMOVE_REPLY_QUEUE_NAME);
+         message.setReplyTo(CONSUMER_REMOVE_REPLY_ADDRESS);
          message.getBodyBuffer().writeUTF(consumerId);
 
          clientProducer.send(message);
 
          clientSession.start();
 
-         ClientMessage reply = replyConsumer.receive(TimeUnit.SECONDS.toMillis(8L));
+         ClientMessage reply = replyConsumer.receive(TimeUnit.SECONDS.toMillis(5L));
+
+         PushConsumerRemoveStatus status = PushConsumerRemoveStatus.CONSUMER_NOT_FOUND;
          if (reply != null) {
             reply.acknowledge();
+            status = PushConsumerRemoveStatus.valueOf(reply.getBodyBuffer().readUTF());
          }
 
          clientSession.commit();
 
-         if (reply == null) {
-            throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                                                           .entity("Could not delete consumer")
-                                                           .type("text/plain")
-                                                           .build());
-         } else if (!reply.getBooleanProperty("success")) {
+         if (status == PushConsumerRemoveStatus.CONSUMER_NOT_FOUND) {
             throw new NotFoundException(Response.status(Response.Status.NOT_FOUND)
                                                 .entity("Could not find consumer.")
                                                 .type("text/plain")
                                                 .build());
+         } else if (status == PushConsumerRemoveStatus.FAILURE) {
+            throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                                                           .entity("Could not delete consumer")
+                                                           .type("text/plain")
+                                                           .build());
          }
 
       } catch (ActiveMQException ex) {
@@ -194,40 +203,47 @@ public class PushConsumerResource implements MessageHandler {
 
    @Override
    public void onMessage(ClientMessage message) {
-      try (ClientSession clientSession = getSessionFactory().createSession();
-           ClientProducer producer = clientSession.createProducer(message.getReplyTo())) {
-         ClientMessage reply = clientSession.createMessage(ClientMessage.TEXT_TYPE, true);
-         reply.putStringProperty(CONSUMER_REMOVE_REPLY_ID_PARAM, message.getStringProperty(CONSUMER_REMOVE_REPLY_ID_PARAM));
-         try {
-            String consumerId = message.getBodyBuffer().readUTF();
+      try {
+         message.acknowledge();
+         session.commit();
 
-            message.acknowledge();
-            session.commit();
+         String consumerId = message.getBodyBuffer().readUTF();
+         boolean hasConsumer = consumers.containsKey(consumerId);
+         if (hasConsumer) {
+            PushConsumerRemoveStatus status = deleteConsumer(consumerId);
 
-            deleteConsumer(consumerId);
-
-            reply.putBooleanProperty(CONSUMER_REMOVE_SUCCESS_FLAG_PARAM, true);
-         } catch (Exception ex) {
-            reply.putBooleanProperty(CONSUMER_REMOVE_SUCCESS_FLAG_PARAM, false);
-
-            ActiveMQRestLogger.LOGGER.warn("Could not remove consumer", ex);
-         } finally {
-            reply.setExpiration(System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10L));
-            producer.send(reply);
+            try (ClientSession clientSession = getSessionFactory().createSession();
+                 ClientProducer producer = clientSession.createProducer(message.getReplyTo())) {
+               ClientMessage reply = clientSession.createMessage(ClientMessage.TEXT_TYPE, true);
+               reply.putStringProperty(CONSUMER_REMOVE_DESTINATION_PARAM, message.getStringProperty(CONSUMER_REMOVE_DESTINATION_PARAM));
+               reply.putStringProperty(CONSUMER_REMOVE_REPLY_ID_PARAM, message.getStringProperty(CONSUMER_REMOVE_REPLY_ID_PARAM));
+               reply.getBodyBuffer().writeUTF(status.name());
+               reply.setExpiration(System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10L));
+               producer.send(reply);
+            }
          }
+
       } catch (ActiveMQException ex) {
          ActiveMQRestLogger.LOGGER.error("Could not send reply", ex);
       }
    }
 
-   public void deleteConsumer(String consumerId) {
-      ActiveMQRestLogger.LOGGER.removingPushConsumer(consumerId, destination);
+   public PushConsumerRemoveStatus deleteConsumer(String consumerId) {
+      try {
+         ActiveMQRestLogger.LOGGER.removingPushConsumer(consumerId, destination);
 
-      PushConsumer consumer = consumers.remove(consumerId);
-      if (consumer == null) {
-         throw new NullPointerException("Could not find consumer.");
+         PushConsumer consumer = consumers.remove(consumerId);
+         if (consumer == null) {
+            return PushConsumerRemoveStatus.CONSUMER_NOT_FOUND;
+         }
+         consumer.stop();
+
+         return PushConsumerRemoveStatus.SUCCESS;
+      } catch (Exception ex) {
+         ActiveMQRestLogger.LOGGER.error("Could not remove consumer", ex);
+
+         return PushConsumerRemoveStatus.FAILURE;
       }
-      consumer.stop();
    }
 
    public Map<String, PushConsumer> getConsumers() {
@@ -256,24 +272,26 @@ public class PushConsumerResource implements MessageHandler {
 
    private synchronized void createUnregistrationTopicIfNeeded() {
       try (ClientSession clientSession = getSessionFactory().createSession(false, false, false)) {
-         ClientSession.AddressQuery addressQuery = clientSession.addressQuery(CONSUMER_REMOVE_QUEUE_NAME);
+         ClientSession.AddressQuery addressQuery = clientSession.addressQuery(CONSUMER_REMOVE_ADDRESS);
          if (!addressQuery.isExists()) {
-            clientSession.createAddress(CONSUMER_REMOVE_QUEUE_NAME, RoutingType.MULTICAST, false);
+            clientSession.createAddress(CONSUMER_REMOVE_ADDRESS, RoutingType.MULTICAST, false);
          }
 
-         addressQuery = clientSession.addressQuery(CONSUMER_REMOVE_REPLY_QUEUE_NAME);
+         addressQuery = clientSession.addressQuery(CONSUMER_REMOVE_REPLY_ADDRESS);
          if (!addressQuery.isExists()) {
-            clientSession.createAddress(CONSUMER_REMOVE_REPLY_QUEUE_NAME, RoutingType.ANYCAST, false);
+            clientSession.createAddress(CONSUMER_REMOVE_REPLY_ADDRESS, RoutingType.MULTICAST, false);
          }
 
-         ClientSession.QueueQuery queueQuery = clientSession.queueQuery(CONSUMER_REMOVE_QUEUE_NAME);
+         String filter = String.format("%s = '%s'", CONSUMER_REMOVE_DESTINATION_PARAM, destination);
+
+         ClientSession.QueueQuery queueQuery = clientSession.queueQuery(consumerRemoveQueueName);
          if (!queueQuery.isExists()) {
-            clientSession.createQueue(CONSUMER_REMOVE_QUEUE_NAME, RoutingType.MULTICAST, CONSUMER_REMOVE_QUEUE_NAME, true);
+            clientSession.createQueue(CONSUMER_REMOVE_ADDRESS, RoutingType.MULTICAST, consumerRemoveQueueName, new SimpleString(filter), true);
          }
 
-         queueQuery = clientSession.queueQuery(CONSUMER_REMOVE_REPLY_QUEUE_NAME);
+         queueQuery = clientSession.queueQuery(consumerRemoveReplyQueueName);
          if (!queueQuery.isExists()) {
-            clientSession.createQueue(CONSUMER_REMOVE_REPLY_QUEUE_NAME, RoutingType.ANYCAST, CONSUMER_REMOVE_REPLY_QUEUE_NAME, true);
+            clientSession.createQueue(CONSUMER_REMOVE_REPLY_ADDRESS, RoutingType.MULTICAST, consumerRemoveReplyQueueName, new SimpleString(filter), true);
          }
       } catch (ActiveMQException ex) {
          throw new InternalServerErrorException(Response.status(Response.Status.INTERNAL_SERVER_ERROR)
