@@ -62,6 +62,7 @@ public class QueueDestinationsResource {
          ActiveMQQueue activeMQQueue = ActiveMQDestination.createQueue(queue.getName());
          String queueName = activeMQQueue.getAddress();
          createInternal( queueName, queue.getSelector(), queue.isDurable() );
+         findQueue(queueName);
          URI uri = uriInfo.getRequestUriBuilder().path(queueName).build();
          return Response.created(uri).build();
       } catch (Exception e) {

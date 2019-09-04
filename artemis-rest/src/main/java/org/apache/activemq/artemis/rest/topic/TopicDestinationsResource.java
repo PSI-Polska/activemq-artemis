@@ -64,6 +64,7 @@ public class TopicDestinationsResource {
          ActiveMQTopic activeMQTopic = ActiveMQDestination.createTopic(topic.getName());
          String topicName = activeMQTopic.getAddress();
          createInternal( topicName );
+         findTopic(topicName);
          URI uri = uriInfo.getRequestUriBuilder().path(topicName).build();
          return Response.created(uri).build();
       } catch (Exception e) {
