@@ -21,6 +21,7 @@ import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.*;
+import org.apache.activemq.artemis.rest.ActiveMQRestLogger;
 import org.apache.activemq.artemis.rest.queue.QueueServiceManager;
 import org.apache.activemq.artemis.rest.queue.push.PushStore;
 import org.apache.activemq.artemis.rest.topic.TopicPushStore;
@@ -42,12 +43,12 @@ import static org.apache.activemq.artemis.rest.ActiveMQRestLogger.LOGGER;
 
 public class PushBalancer {
 
-    private static final String TOPIC_PREFIX = "org.apache.activemq.artemis.rest.push";
+    private static final String ADDRESS_PREFIX = "org.apache.activemq.artemis.rest.push";
     private static final String INSTANCE_ID_PROPERTY = "instanceId";
 
     private final ScheduledExecutorService executorService = Executors.newScheduledThreadPool(1);
 
-    private final SimpleString topic;
+    private final SimpleString address;
     private final long interval;
 
     private ClientSessionFactory sessionFactory;
@@ -60,8 +61,8 @@ public class PushBalancer {
     private ClientConsumer consumer;
     private ClientProducer producer;
 
-    public PushBalancer(String topicSuffix, long interval) {
-        this.topic = new SimpleString(TOPIC_PREFIX + "." + topicSuffix);
+    public PushBalancer(String addressSuffix, long interval) {
+        this.address = new SimpleString(ADDRESS_PREFIX + "." + addressSuffix);
         this.interval = interval;
     }
 
@@ -91,13 +92,12 @@ public class PushBalancer {
 
         session = sessionFactory.createSession(true, true);
 
-        createMulticastDestination(session, topic);
+        createMulticastDestination();
 
-        SimpleString filter = new SimpleString(String.format("NOT (%s = '%s')", INSTANCE_ID_PROPERTY, instanceId));
-        consumer = session.createConsumer(topic, filter);
+        consumer = session.createConsumer(instanceId);
         consumer.setMessageHandler(new PushInfoMessageHandler(queueServiceManager, topicServiceManager));
 
-        producer = session.createProducer(topic);
+        producer = session.createProducer(address);
 
         session.start();
 
@@ -112,6 +112,7 @@ public class PushBalancer {
             if (!consumer.isClosed())
                 consumer.close();
             if (!session.isClosed()) {
+                session.deleteQueue(instanceId);
                 session.stop();
                 session.close();
             }
@@ -120,15 +121,17 @@ public class PushBalancer {
         }
     }
     
-    private void createMulticastDestination(final ClientSession session,SimpleString topic) throws ActiveMQException
+    private void createMulticastDestination() throws ActiveMQException
     {   
         try
         {
-            session.createTemporaryQueue(topic, RoutingType.MULTICAST, topic);
+            String filter = String.format("NOT (%s = '%s')", INSTANCE_ID_PROPERTY, instanceId);
+
+            session.createTemporaryQueue(address, RoutingType.MULTICAST, new SimpleString(instanceId), new SimpleString(filter));
         }
         catch (ActiveMQQueueExistsException | ActiveMQAddressExistsException ex)
         {
-            //do nothing - it is better to discard the exception than check for queue existence as it poses less risk for race conditions
+            LOGGER.warn("Address or topic already exists", ex);
         }
     }
 
