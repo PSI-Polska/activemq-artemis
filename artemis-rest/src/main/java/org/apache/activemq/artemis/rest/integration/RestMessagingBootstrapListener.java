@@ -22,6 +22,7 @@ import javax.servlet.ServletContextListener;
 
 import org.apache.activemq.artemis.jms.client.ConnectionFactoryOptions;
 import org.apache.activemq.artemis.rest.MessageServiceManager;
+import org.apache.activemq.artemis.rest.event.EventsResource;
 import org.apache.activemq.artemis.utils.ObjectInputStreamWithClassLoader;
 import org.jboss.resteasy.spi.Registry;
 
@@ -50,6 +51,7 @@ public class RestMessagingBootstrapListener implements ServletContextListener, C
          manager.start();
          registry.addSingletonResource(manager.getQueueManager().getDestination());
          registry.addSingletonResource(manager.getTopicManager().getDestination());
+         registry.addSingletonResource(new EventsResource() );
       } catch (Exception e) {
          throw new RuntimeException(e);
       }
