@@ -25,17 +25,19 @@ import org.apache.activemq.artemis.rest.MessageServiceManager;
 import org.apache.activemq.artemis.rest.event.EventsResource;
 import org.apache.activemq.artemis.utils.ObjectInputStreamWithClassLoader;
 import org.jboss.resteasy.spi.Registry;
+import org.jboss.resteasy.spi.ResteasyDeployment;
 
 public class RestMessagingBootstrapListener implements ServletContextListener, ConnectionFactoryOptions {
 
-   MessageServiceManager manager;
+   private MessageServiceManager manager;
    private String deserializationBlackList;
    private String deserializationWhiteList;
 
    @Override
    public void contextInitialized(ServletContextEvent contextEvent) {
       ServletContext context = contextEvent.getServletContext();
-      Registry registry = (Registry) context.getAttribute(Registry.class.getName());
+      ResteasyDeployment deployment = (ResteasyDeployment) context.getAttribute( ResteasyDeployment.class.getName());
+      Registry registry = deployment.getRegistry();
       if (registry == null) {
          throw new RuntimeException("You must install RESTEasy as a Bootstrap Listener and it must be listed before this class");
       }
@@ -51,7 +53,7 @@ public class RestMessagingBootstrapListener implements ServletContextListener, C
          manager.start();
          registry.addSingletonResource(manager.getQueueManager().getDestination());
          registry.addSingletonResource(manager.getTopicManager().getDestination());
-         registry.addSingletonResource(new EventsResource() );
+         registry.addSingletonResource(new EventsResource(manager) );
       } catch (Exception e) {
          throw new RuntimeException(e);
       }

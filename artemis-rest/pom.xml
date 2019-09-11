@@ -147,6 +147,12 @@
          <artifactId>junit</artifactId>
          <scope>test</scope>
       </dependency>
+      <!--TODO: Remember to make it not snapshot -->
+      <dependency>
+         <groupId>de.psi.pjf.bus</groupId>
+         <artifactId>bus.registry.client.api</artifactId>
+         <version>1.0.0-SNAPSHOT</version>
+      </dependency>
    </dependencies>
 
    <build>
