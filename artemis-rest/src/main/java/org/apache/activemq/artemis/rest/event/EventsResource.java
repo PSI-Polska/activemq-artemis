@@ -4,7 +4,6 @@ package org.apache.activemq.artemis.rest.event;
 import de.psi.pjf.bus.registry.client.RegistryClient;
 import de.psi.pjf.bus.registry.client.RegistryResponse;
 import de.psi.pjf.bus.registry.client.jaxrs.JaxrsRegistryClient;
-import de.psi.pjf.bus.registry.client.jaxrs.cache.CacheException;
 import de.psi.pjf.bus.registry.client.jaxrs.cache.CacheFactory;
 import de.psi.pjf.bus.registry.common.event.EventRoute;
 import de.psi.pjf.bus.registry.common.event.EventRoutes;
@@ -78,7 +77,7 @@ public class EventsResource
         }
         catch(Exception e){
             ActiveMQRestLogger.LOGGER.error( "Error handling event", e );
-            Response error = Response.serverError().entity("Problem processing anNotFoundException event: " + e.getMessage()).type("text/plain").build();
+            Response error = Response.serverError().entity("Problem processing an event: " + e.getCause()).type("text/plain").build();
             throw new WebApplicationException( e, error);
         }
         Response.ResponseBuilder builder = Response.status(201);
@@ -143,26 +142,18 @@ public class EventsResource
 
     private HttpHeaders addContentType(HttpHeaders aHttpHeaders, EventRoute aEventRoute){
         MultivaluedMap hdrs = aHttpHeaders.getRequestHeaders();
-        hdrs.putSingle( HttpHeaders.CONTENT_TYPE, chooseContentType( aEventRoute.getContentTypes() ).toString() );
+        hdrs.putSingle( HttpHeaders.CONTENT_TYPE, chooseContentType( aHttpHeaders.getMediaType(), aEventRoute.getContentTypes() ).toString() );
         return new ResteasyHttpHeaders( hdrs );
     }
 
-    private MediaType chooseContentType( Collection< String > aContentTypes )
+    private MediaType chooseContentType( MediaType userProvided, Collection< String > aContentTypes )
     {
-        if ( aContentTypes.isEmpty() || aContentTypes.contains( MediaType.APPLICATION_JSON ) )
-        {
-            return MediaType.APPLICATION_JSON_TYPE;
-        }
-        else if ( aContentTypes.contains( MediaType.APPLICATION_XML ) )
-        {
-            return MediaType.APPLICATION_XML_TYPE;
-        }
-        else
-        {
-            String mediaType = aContentTypes.iterator().next();
+        return aContentTypes.stream()
+            .map( MediaType::valueOf )
+            .filter( userProvided::equals )
+            .findAny()
+            .orElseThrow( () -> new RuntimeException( "Request content-type mismatch." ) );
 
-            return MediaType.valueOf( mediaType );
-        }
     }
 
 }
