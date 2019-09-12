@@ -17,6 +17,7 @@
 package org.apache.activemq.artemis.rest.push.balancer;
 
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
+import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.MessageHandler;
 import org.apache.activemq.artemis.rest.queue.QueueResource;
 import org.apache.activemq.artemis.rest.queue.QueueServiceManager;
@@ -39,14 +40,17 @@ import static org.apache.activemq.artemis.rest.ActiveMQRestLogger.LOGGER;
 class PushInfoMessageHandler implements MessageHandler {
 
     private final Unmarshaller unmarshaller;
+    private final ClientSession session;
     private final QueueServiceManager queueServiceManager;
     private final TopicServiceManager topicServiceManager;
 
-    PushInfoMessageHandler(QueueServiceManager queueServiceManager,
+    PushInfoMessageHandler(ClientSession session,
+                           QueueServiceManager queueServiceManager,
                            TopicServiceManager topicServiceManager) throws JAXBException {
         JAXBContext ctx = JAXBContext.newInstance(PushInfo.class);
         unmarshaller = ctx.createUnmarshaller();
 
+        this.session = session;
         this.queueServiceManager = queueServiceManager;
         this.topicServiceManager = topicServiceManager;
     }
@@ -54,6 +58,9 @@ class PushInfoMessageHandler implements MessageHandler {
     @Override
     public void onMessage(ClientMessage message) {
         try {
+            message.acknowledge();
+            session.commit();
+
             String body = message.getBodyBuffer().readUTF();
             PushInfo info = read(body);
 

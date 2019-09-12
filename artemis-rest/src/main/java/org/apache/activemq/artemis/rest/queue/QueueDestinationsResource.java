@@ -17,6 +17,7 @@
 package org.apache.activemq.artemis.rest.queue;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
@@ -27,6 +28,7 @@ import org.apache.activemq.artemis.rest.ActiveMQRestLogger;
 import org.apache.activemq.artemis.rest.queue.push.PushConsumerResource;
 import org.apache.activemq.artemis.rest.queue.push.xml.PushRegistration;
 import org.apache.activemq.artemis.rest.util.Constants;
+import org.apache.commons.lang3.StringUtils;
 import org.w3c.dom.Document;
 
 import javax.ws.rs.Consumes;
@@ -79,10 +81,10 @@ public class QueueDestinationsResource {
 
          ClientSession.QueueQuery query = session.queueQuery(new SimpleString(name));
          if (!query.isExists()) {
-            if (selector != null) {
-               session.createQueue(name, name, selector, durable);
+            if (StringUtils.isNotBlank(selector)) {
+               session.createQueue(name, RoutingType.MULTICAST, name, selector, durable);
             } else {
-               session.createQueue(name, name, durable);
+               session.createQueue(name, RoutingType.MULTICAST, name, durable);
             }
 
          } else {

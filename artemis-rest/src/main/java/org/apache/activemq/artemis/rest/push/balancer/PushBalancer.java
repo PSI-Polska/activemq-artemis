@@ -95,7 +95,7 @@ public class PushBalancer {
         createMulticastDestination();
 
         consumer = session.createConsumer(instanceId);
-        consumer.setMessageHandler(new PushInfoMessageHandler(queueServiceManager, topicServiceManager));
+        consumer.setMessageHandler(new PushInfoMessageHandler(session, queueServiceManager, topicServiceManager));
 
         producer = session.createProducer(address);
 
