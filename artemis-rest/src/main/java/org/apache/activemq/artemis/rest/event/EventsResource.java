@@ -1,6 +1,7 @@
 
 package org.apache.activemq.artemis.rest.event;
 
+import com.sun.xml.internal.ws.server.UnsupportedMediaException;
 import de.psi.pjf.bus.registry.client.RegistryClient;
 import de.psi.pjf.bus.registry.client.RegistryResponse;
 import de.psi.pjf.bus.registry.client.jaxrs.JaxrsRegistryClient;
@@ -21,6 +22,7 @@ import org.apache.activemq.artemis.utils.UUIDGenerator;
 import org.jboss.resteasy.specimpl.ResteasyHttpHeaders;
 
 import javax.ws.rs.NotFoundException;
+import javax.ws.rs.NotSupportedException;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
@@ -75,6 +77,11 @@ public class EventsResource
                 Response.Status.NOT_FOUND).entity( "Event destination not known for: "+destinationName).type( "text/plain").build();
             throw new WebApplicationException( e, error);
         }
+        catch( NotSupportedException e ){
+            Response error = Response.status(
+                Response.Status.UNSUPPORTED_MEDIA_TYPE).entity( "Wrong media type for destination: "+destinationName).type( "text/plain").build();
+            throw new WebApplicationException( e, error);
+        }
         catch(Exception e){
             ActiveMQRestLogger.LOGGER.error( "Error handling event", e );
             Response error = Response.serverError().entity("Problem processing an event: " + e.getCause()).type("text/plain").build();
@@ -108,14 +115,14 @@ public class EventsResource
             HttpHeaders augmentedHeaders = addContentType( headers,aEventRoute );
             ClientMessage message = createActiveMQMessage( augmentedHeaders, body, aSession );
             producer.send( message );
-        }catch(Exception e){
+        }catch(ActiveMQException e){
             throw new RuntimeException( "Error sending message", e );
         }
     }
 
     private ClientMessage createActiveMQMessage( HttpHeaders headers,
                                                    byte[] body,
-                                                   ClientSession session) throws Exception {
+                                                   ClientSession session)  {
         ClientMessage message = session.createMessage( Message.BYTES_TYPE, true);
 
         UUID uid = UUIDGenerator.getInstance().generateUUID();
@@ -152,7 +159,7 @@ public class EventsResource
             .map( MediaType::valueOf )
             .filter( userProvided::equals )
             .findAny()
-            .orElseThrow( () -> new RuntimeException( "Request content-type mismatch." ) );
+            .orElseThrow( () -> new NotSupportedException( "Request content-type mismatch." ) );
 
     }
 
