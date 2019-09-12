@@ -4,6 +4,7 @@ package org.apache.activemq.artemis.rest.event;
 import de.psi.pjf.bus.registry.client.RegistryClient;
 import de.psi.pjf.bus.registry.client.RegistryResponse;
 import de.psi.pjf.bus.registry.client.jaxrs.JaxrsRegistryClient;
+import de.psi.pjf.bus.registry.client.jaxrs.cache.CacheException;
 import de.psi.pjf.bus.registry.client.jaxrs.cache.CacheFactory;
 import de.psi.pjf.bus.registry.common.event.EventRoute;
 import de.psi.pjf.bus.registry.common.event.EventRoutes;
@@ -20,6 +21,7 @@ import org.apache.activemq.artemis.utils.UUID;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
 import org.jboss.resteasy.specimpl.ResteasyHttpHeaders;
 
+import javax.ws.rs.NotFoundException;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
@@ -69,29 +71,26 @@ public class EventsResource
         try
         {
             internalHandleEvent( destinationName, headers, body );
-        }catch(DestinationMissingException e){
-            Response error = Response.serverError().entity("Event destination not known for: "+destinationName).type("text/plain").build();
+        }catch( NotFoundException e){
+            Response error = Response.status(
+                Response.Status.NOT_FOUND).entity( "Event destination not known for: "+destinationName).type( "text/plain").build();
             throw new WebApplicationException( e, error);
         }
         catch(Exception e){
             ActiveMQRestLogger.LOGGER.error( "Error handling event", e );
-            Response error = Response.serverError().entity("Problem processing an event: " + e.getMessage()).type("text/plain").build();
+            Response error = Response.serverError().entity("Problem processing anNotFoundException event: " + e.getMessage()).type("text/plain").build();
             throw new WebApplicationException( e, error);
         }
         Response.ResponseBuilder builder = Response.status(201);
         return builder.build();
     }
 
-    private void internalHandleEvent(String destinationName,HttpHeaders headers,byte[] body) throws DestinationMissingException, ActiveMQException
+    private void internalHandleEvent(String destinationName,HttpHeaders headers,byte[] body) throws ActiveMQException
     {
         ActiveMQRestLogger.LOGGER.info(String.format("Processing event %s",destinationName ));
 
         RegistryResponse< EventRoutes > response = registryClient.resolveEvent( destinationName );
         EventRoutes eventRoutes = response.get();
-
-        if(eventRoutes.getRoutes().isEmpty()){
-            throw new DestinationMissingException();
-        }
 
         try(ClientSession session = messageServiceManager.getConsumerSessionFactory().createSession())
         {
