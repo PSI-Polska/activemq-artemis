@@ -20,4 +20,5 @@ public interface Constants {
 
    String WAIT_HEADER = "Accept-Wait";
    String PATH_FOR_QUEUES = "/queues";
+   String PATH_FOR_EVENTS = "/events";
 }

@@ -61,11 +61,16 @@ public class MessageServiceManager {
 
    private ClientSessionFactory consumerSessionFactory;
 
-   public MessageServiceManager(ConnectionFactoryOptions jmsOptions)
+   public MessageServiceManager( ConnectionFactoryOptions jmsOptions)
    {
       queueManager = new QueueServiceManager(jmsOptions);
       topicManager = new TopicServiceManager(jmsOptions);
       pushBalancer = new PushBalancer();
+   }
+
+   public ClientSessionFactory getConsumerSessionFactory()
+   {
+      return consumerSessionFactory;
    }
 
    public BindingRegistry getRegistry() {

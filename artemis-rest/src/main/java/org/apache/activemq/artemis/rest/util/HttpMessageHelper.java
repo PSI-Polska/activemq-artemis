@@ -96,7 +96,7 @@ public class HttpMessageHelper {
       }
    }
 
-   public static void writeHttpMessage(HttpHeaders headers, byte[] body, ClientMessage message) throws Exception {
+   public static void writeHttpMessage(HttpHeaders headers, byte[] body, ClientMessage message)  {
 
       MultivaluedMap<String, String> hdrs = headers.getRequestHeaders();
       for (Entry<String, List<String>> entry : hdrs.entrySet()) {
