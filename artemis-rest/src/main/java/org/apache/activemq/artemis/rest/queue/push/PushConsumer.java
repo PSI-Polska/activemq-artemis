@@ -27,6 +27,7 @@ import org.apache.activemq.artemis.jms.client.ConnectionFactoryOptions;
 import org.apache.activemq.artemis.rest.ActiveMQRestLogger;
 import org.apache.activemq.artemis.rest.queue.push.xml.PushRegistration;
 import org.apache.activemq.artemis.utils.SelectorTranslator;
+import org.apache.commons.lang3.StringUtils;
 
 public class PushConsumer {
 
@@ -93,7 +94,7 @@ public class PushConsumer {
 
          ClientConsumer consumer;
 
-         if (registration.getSelector() != null) {
+         if (StringUtils.isNotBlank(registration.getSelector())) {
             consumer = session.createConsumer(destination, SelectorTranslator.convertToActiveMQFilterString(registration.getSelector()));
          } else {
             consumer = session.createConsumer(destination);
