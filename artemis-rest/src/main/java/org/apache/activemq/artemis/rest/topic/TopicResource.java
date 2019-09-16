@@ -31,8 +31,11 @@ import org.apache.activemq.artemis.rest.ActiveMQRestLogger;
 import org.apache.activemq.artemis.rest.queue.DestinationResource;
 import org.apache.activemq.artemis.rest.queue.PostMessage;
 
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 public class TopicResource extends DestinationResource implements MessageHandler {
 
@@ -245,30 +248,17 @@ public class TopicResource extends DestinationResource implements MessageHandler
          message.acknowledge();
          session.commit();
 
-         String queueName = message.getStringProperty(TOPIC_REMOVE_DESTINATION_PARAM);
-
          ClientSessionFactory sessionFactory = serviceManager.getSessionFactory();
          try (ClientSession clientSession = sessionFactory.createSession(true, true);
               ClientProducer producer = clientSession.createProducer(message.getReplyTo())) {
 
-            ClientSession.QueueQuery queueQuery = clientSession.queueQuery(new SimpleString(queueName));
-            if (queueQuery.isExists()) {
-               TopicRemoveStatus status = deleteTopic();
-
-               ClientMessage reply = clientSession.createMessage(ClientMessage.TEXT_TYPE, true);
-               reply.putStringProperty(TOPIC_REMOVE_DESTINATION_PARAM, message.getStringProperty(TOPIC_REMOVE_DESTINATION_PARAM));
-               reply.putStringProperty(TOPIC_REMOVE_REPLY_ID_PARAM, message.getStringProperty(TOPIC_REMOVE_REPLY_ID_PARAM));
-               reply.getBodyBuffer().writeUTF(status.name());
-               reply.setExpiration(System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10L));
-               producer.send(reply);
-            } else {
-               topicDestinationsResource.getTopics().remove(destination);
-
-               try {
-                  stop();
-               } catch (Exception ignored) {
-               }
-            }
+             TopicRemoveStatus status = deleteTopic();
+             ClientMessage reply = clientSession.createMessage(ClientMessage.TEXT_TYPE, true);
+             reply.putStringProperty(TOPIC_REMOVE_DESTINATION_PARAM, message.getStringProperty(TOPIC_REMOVE_DESTINATION_PARAM));
+             reply.putStringProperty(TOPIC_REMOVE_REPLY_ID_PARAM, message.getStringProperty(TOPIC_REMOVE_REPLY_ID_PARAM));
+             reply.getBodyBuffer().writeUTF(status.name());
+             reply.setExpiration(System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10L));
+             producer.send(reply);
          }
       } catch (Exception ex) {
          ActiveMQRestLogger.LOGGER.error("Could not send reply", ex);
@@ -278,23 +268,18 @@ public class TopicResource extends DestinationResource implements MessageHandler
    public TopicRemoveStatus deleteTopic() {
       try {
          ActiveMQRestLogger.LOGGER.removingTopic(destination);
-
          topicDestinationsResource.getTopics().remove(destination);
-
-         try {
-            stop();
-         } catch (Exception ignored) {
-         }
-
-         try (ClientSession session = serviceManager.getSessionFactory().createSession(false, false, false)) {
-            SimpleString topicName = new SimpleString(destination);
-            session.deleteQueue(topicName);
-         }
-
+         // Gathering all durable subscriptions, their queues need to be removed manually
+         Set< PushSubscription > durableSubscriptions = 
+             pushSubscriptions.getConsumers().values().stream()
+                 .filter( pushSubscription -> pushSubscription.getRegistration().isDurable() )
+                 .collect( Collectors.toSet() );
+         stop();
+         durableSubscriptions.forEach( subscription -> pushSubscriptions.deleteSubscriberQueue( subscription ) );
          return TopicRemoveStatus.SUCCESS;
       } catch (Exception ex) {
          ActiveMQRestLogger.LOGGER.error("Could not remove topic", ex);
-
+         
          return TopicRemoveStatus.FAILURE;
       }
    }
