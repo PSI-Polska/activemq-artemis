@@ -154,7 +154,7 @@ public class MessageServiceManager {
       defaultSettings.setDuplicatesAllowed(configuration.isDupsOk());
       defaultSettings.setDurableSend(configuration.isDefaultDurableSend());
 
-      ServerLocator consumerLocator = ActiveMQClient.createServerLocator(getUrl());
+      ServerLocator consumerLocator = ActiveMQClient.createServerLocator(configuration.getUrl());
 
       if (configuration.getConsumerWindowSize() != -1) {
          consumerLocator.setConsumerWindowSize(configuration.getConsumerWindowSize());
@@ -165,7 +165,7 @@ public class MessageServiceManager {
       consumerSessionFactory = consumerLocator.createSessionFactory();
       ActiveMQRestLogger.LOGGER.debug("Created ClientSessionFactory: " + consumerSessionFactory);
 
-      ServerLocator defaultLocator = ActiveMQClient.createServerLocator(getUrl());
+      ServerLocator defaultLocator = ActiveMQClient.createServerLocator(configuration.getUrl());
 
       ClientSessionFactory sessionFactory = defaultLocator.createSessionFactory();
 
@@ -214,11 +214,11 @@ public class MessageServiceManager {
       pushBalancer.start();
    }
 
-   private String getNodeIdentifier(){
-      String hostname = System.getenv("ARTEMIS_HOST");
-      if(hostname != null){
+   private String getNodeIdentifier() {
+      String hostname = configuration.getNodeId();
+      if (StringUtils.isNotBlank(hostname)) {
          return hostname.toLowerCase();
-      }else{
+      } else {
          Path currentRelativePath = Paths.get( "");
          String path = currentRelativePath.toAbsolutePath().toString();
          return path.replaceAll( File.pathSeparator, "_" );
@@ -246,13 +246,5 @@ public class MessageServiceManager {
       } catch (InterruptedException e) {
       }
       this.consumerSessionFactory.close();
-   }
-
-   private String getUrl() {
-      String envUrl = System.getenv("ARTEMIS_REST_CONNECTION_URL");
-      if( StringUtils.isNotBlank( envUrl ) ) {
-         return envUrl;
-      }
-      return configuration.getUrl();
    }
 }

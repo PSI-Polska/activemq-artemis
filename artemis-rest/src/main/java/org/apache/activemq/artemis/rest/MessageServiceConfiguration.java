@@ -38,6 +38,8 @@ public class MessageServiceConfiguration {
    private String url = "vm://0";
    private boolean useLinkHeaders = false;
 
+   private String nodeId;
+
    private String deserializationWhiteList;
    private String deserializationBlackList;
 
@@ -58,6 +60,15 @@ public class MessageServiceConfiguration {
 
    public void setUseLinkHeaders(boolean useLinkHeaders) {
       this.useLinkHeaders = useLinkHeaders;
+   }
+
+   @XmlElement(name = "node-id")
+   public String getNodeId() {
+      return nodeId;
+   }
+
+   public void setNodeId(String aNodeId) {
+      nodeId = aNodeId;
    }
 
    @XmlElement(name = "default-durable-send")
