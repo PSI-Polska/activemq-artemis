@@ -16,6 +16,6 @@ build:
 deploy:
   stage: deploy
   only:
-    - 2.9.0-PSI
+    - PSI-2.9.x
   script:
     - mvn $MAVEN_CLI_OPTS -s $M2_SETTINGS -Dorg.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory.DISABLED=AnythingNotNull -DskipTests deploy 
