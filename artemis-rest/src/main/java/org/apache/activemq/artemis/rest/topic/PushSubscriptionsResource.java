@@ -323,7 +323,6 @@ public class PushSubscriptionsResource implements MessageHandler {
         } 
         registration.setId(genId);
         registration.setTopic(destination);
-        registration.setDisableOnFailure( true );
         ClientSession createSession = createSubscription(registration.getDestination(), registration.isDurable());
         try {
             PushSubscription consumer = new PushSubscription(sessionFactory, registration.getDestination(), genId, registration, pushStore, jmsOptions);

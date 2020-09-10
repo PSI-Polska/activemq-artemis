@@ -157,6 +157,7 @@ public class UriStrategy implements PushStrategy {
                   case 414:
                   case 415:
                   case 416:
+                  case 500:
                      throw new RuntimeException("Something is wrong with the message, status returned: " + status + " for push registration of URI: " + uri);
                   case 401: // might as well consider these critical failures and abort.  Immediately signal to disable push registration depending on config
                   case 402:
