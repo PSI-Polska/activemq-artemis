@@ -87,7 +87,7 @@
       <guava.version>24.1-jre</guava.version>
       <jboss.logging.version>3.4.0.Final</jboss.logging.version>
       <jetty.version>9.4.3.v20170317</jetty.version>
-      <jgroups.version>3.6.13.Final</jgroups.version>
+      <jgroups.version>4.0.0.Final</jgroups.version>
       <maven.assembly.plugin.version>2.4</maven.assembly.plugin.version>
       <mockito.version>2.8.47</mockito.version>
       <netty.version>4.1.34.Final</netty.version>
