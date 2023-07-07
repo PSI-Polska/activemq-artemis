@@ -20,7 +20,7 @@
    <groupId>org.apache.activemq</groupId>
    <artifactId>artemis-pom</artifactId>
    <packaging>pom</packaging>
-   <version>2.19.2-SNAPSHOT</version>
+   <version>2.19.2-PSI-SNAPSHOT</version>
 
    <parent>
       <groupId>org.apache</groupId>
@@ -1893,7 +1893,6 @@
 
    <!--
      un comment this session here to validate repository releases.
-     <repositories>
       <repository>
          <id>release validation</id>
          <name>Maven 1.0.0 release</name>
